@@ -1,0 +1,35 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+
+class requestHistory extends Model
+{
+    use HasFactory;
+
+    protected $fillable = [
+        'user_id',
+        'fund_id',
+        'amount',
+        'motif',
+        'type',
+        'request_id',
+        'fence_id',
+        'invoice_id',
+        'enterprise_id',
+        'sold',
+        'done_at',
+        'account_id',
+        'status',
+        'beneficiary',
+        'provenance',
+        'uuid',
+        'fund_receiver_id',
+        'expenditure_id',
+        'member_account_id',
+        'nature',
+    ];
+
+}

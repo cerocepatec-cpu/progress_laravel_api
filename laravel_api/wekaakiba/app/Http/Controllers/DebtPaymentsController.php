@@ -1,0 +1,420 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Debts;
+use App\Models\Invoices;
+use App\Models\DebtPayments;
+use Illuminate\Support\Facades\DB;
+use App\Http\Requests\StoreDebtPaymentsRequest;
+use App\Http\Requests\UpdateDebtPaymentsRequest;
+use App\Models\CustomerController;
+use Exception;
+use Illuminate\Http\Request;
+use stdClass;
+
+class DebtPaymentsController extends Controller
+{
+    /**
+     * Display a listing of the resource.
+     *
+     * @return \Illuminate\Http\Response
+     */
+    public function index()
+    {
+        $list=collect(DebtPayments::all());
+        $listdata=$list->map(function ($item,$key){
+            return $this->show($item);
+        });
+        return $listdata;
+    }
+
+    public function paymentsbycustomer(Request $request, $customerid)
+    {
+        // pagination dynamique (par défaut 10 par page)
+        $perPage = $request->get('per_page', 10);
+
+        // requête avec tri par done_at desc
+        $query = DebtPayments::join('debts as D', 'debt_payments.debt_id', '=', 'D.id')
+            ->where('D.customer_id', '=', $customerid)
+            ->orderBy('debt_payments.done_at', 'desc')
+            ->select('debt_payments.*'); // bien sélectionner les colonnes
+        
+        // paginer les résultats
+        $paginated = $query->paginate($perPage);
+
+        // transformer et regrouper par date done_at
+        $grouped = collect($paginated->items())
+            ->map(function ($item) {
+                return $this->show($item);
+            })
+            ->groupBy(function ($item) {
+                // on groupe par la date au format YYYY-MM-DD
+                return \Carbon\Carbon::parse($item->done_at)->toDateString();
+            });
+
+        // retour avec pagination + données groupées
+        return [
+            'current_page' => $paginated->currentPage(),
+            'per_page' => $paginated->perPage(),
+            'total' => $paginated->total(),
+            'last_page' => $paginated->lastPage(),
+            'data' => $grouped
+        ];
+    }
+
+
+    public function listpaymentsbydebt($debtid){
+        $list=collect(DebtPayments::where('debt_id','=',$debtid)->get());
+        $listdata=$list->map(function ($item,$key){
+            return $this->show($item);
+        });
+        return $listdata;
+    }
+
+    public function getpaymentbyid($paymentid){
+        try{
+            return response()->json([
+                "message"=>"success",
+                "status"=>200,
+                "error"=>null,
+                "data"=>$this->show(DebtPayments::find($paymentid))
+            ]);
+            
+        }catch(Exception $e){
+            return response()->json([
+                "message"=>"error",
+                "status"=>200,
+                "error"=>$e->getMessage(),
+                "data"=>null
+            ]);
+        }  
+    }
+
+     /**
+     * searching of debts by done paginated
+     */
+    public function searchpaymentsdebtsbydoneby(Request $request){
+        $searchTerm = $request->query('keyword', '');
+        $enterpriseId = $request->query('enterprise_id', 0);  
+        $actualuser=$this->getinfosuser($request->query('user_id'));
+        if ($actualuser['user_type']=='super_admin') {
+        
+            $list =DebtPayments::Join('debts', 'debt_payments.debt_id', '=', 'debts.id')
+                ->Join('invoices', 'debts.invoice_id', '=', 'invoices.id')
+                ->join('customer_controllers','invoices.customer_id','=','customer_controllers.id')
+                ->where('invoices.enterprise_id', '=', $enterpriseId)
+                ->where(function($query) use ($searchTerm) {
+                    $query->where('debt_payments.amount_payed', 'LIKE', "%$searchTerm%")
+                    ->orWhere('debt_payments.uuid', 'LIKE', "%$searchTerm%")
+                    ->orWhere('debts.amount', 'LIKE', "%$searchTerm%")
+                    ->orWhere('debts.sold', 'LIKE', "%$searchTerm%")
+                    ->orWhere('debts.uuid', 'LIKE', "%$searchTerm%")
+                    ->orWhere('debts.done_at', 'LIKE', "%$searchTerm%")
+                    ->orWhere('debts.id', 'LIKE', "%$searchTerm%")
+                    ->orWhere('customer_controllers.customerName', 'LIKE', "%$searchTerm%")
+                    ->orWhere('customer_controllers.phone', 'LIKE', "%$searchTerm%")
+                    ->orWhere('customer_controllers.mail', 'LIKE', "%$searchTerm%")
+                    ->orWhere('customer_controllers.uuid', 'LIKE', "%$searchTerm%");
+                })
+                ->select('debt_payments.*')
+                ->paginate(10)
+                ->appends($request->query());
+
+            $list->getCollection()->transform(function ($item){
+                return $this->show($item);
+            });
+            return $list;
+
+        } else {
+            
+            $list =DebtPayments::Join('debts', 'debt_payments.debt_id', '=', 'debts.id')
+                ->Join('invoices', 'debts.invoice_id', '=', 'invoices.id')
+                ->join('customer_controllers','invoices.customer_id','=','customer_controllers.id')
+                ->where('debt_payments.done_by_id', '=', $actualuser['id'])
+                ->where(function($query) use ($searchTerm) {
+                    $query->where('debt_payments.amount_payed', 'LIKE', "%$searchTerm%")
+                    ->orWhere('debt_payments.uuid', 'LIKE', "%$searchTerm%")
+                    ->orWhere('debts.amount', 'LIKE', "%$searchTerm%")
+                    ->orWhere('debts.sold', 'LIKE', "%$searchTerm%")
+                    ->orWhere('debts.uuid', 'LIKE', "%$searchTerm%")
+                    ->orWhere('debts.done_at', 'LIKE', "%$searchTerm%")
+                    ->orWhere('debts.id', 'LIKE', "%$searchTerm%")
+                    ->orWhere('customer_controllers.customerName', 'LIKE', "%$searchTerm%")
+                    ->orWhere('customer_controllers.phone', 'LIKE', "%$searchTerm%")
+                    ->orWhere('customer_controllers.mail', 'LIKE', "%$searchTerm%")
+                    ->orWhere('customer_controllers.uuid', 'LIKE', "%$searchTerm%");
+                })
+                ->select('debt_payments.*')
+                ->paginate(10)
+                ->appends($request->query());
+
+            $list->getCollection()->transform(function ($item){
+                return $this->show($item);
+            });
+            return $list;
+        }
+    }
+
+    /**
+     * Show the form for creating a new resource.
+     *
+     * @return \Illuminate\Http\Response
+     */
+    public function create()
+    {
+        //
+    }
+
+    /**
+     * Store a newly created resource in storage.
+     *
+     * @param  \App\Http\Requests\StoreDebtPaymentsRequest  $request
+     * @return \Illuminate\Http\Response
+     */
+    public function store(StoreDebtPaymentsRequest $request)
+    {
+        if ($request['type']=="safeguard") {
+            $newpayment = new stdClass;
+            if(!$request['done_at']){
+                if (isset($request['created_at'])) {
+                    $request['done_at']=$request['created_at'];
+                } else {
+                    $request['done_at']=date('Y-m-d');
+                }
+            }
+
+            $debt=Debts::where('uuid','=',$request['debtUuid'])->first();
+            $request['debt_id']= $debt['id'];
+            $payments=DebtPayments::where('debt_id','=',$debt['id'])
+            ->get(); 
+            
+           
+
+            if(count($payments)>0){
+                 $payments=DebtPayments::select(DB::raw('sum(amount_payed) as totalpayed'))
+                ->where('debt_id','=',$debt['id'])->first();
+                if ($payments['totalpayed']<$debt['amount'] || $payments['totalpayed']==0) {
+                    $request['sync_status']=true;
+                    $newpayment=DebtPayments::create($request->all());
+                    $payments=DebtPayments::select(DB::raw('sum(amount_payed) as totalpayed'))
+                    ->where('debt_id','=',$debt['id'])->first();
+                    DB::update('update debts set sold = amount - ? where id = ?',[$payments['totalpayed'],$debt['id']]);
+                }else{
+                    return response()->json([
+                        "status"=>400,
+                        "data"=>null,
+                        "message"=>"already payed"
+                    ],400);
+                }
+            }else{
+                $request['sync_status']=true;
+                $newpayment=DebtPayments::create($request->all());
+                DB::update('update debts set sold = amount - ? where id = ?',[$request['amount_payed'],$debt['id']]);
+            }
+
+            
+
+            if ($newpayment) {
+                return $this->show($newpayment);
+            }else{
+                return response()->json([
+                    "status"=>400,
+                    "data"=>null,
+                    "message"=>"incorrect data"
+                ],400);
+            }
+            
+        }else{
+
+            if(!$request['done_at']){
+                $request['done_at']=date('Y-m-d');
+            }
+              $debt=Debts::where('id','=',$request['debt_id'])->first();
+             
+              $payments=DebtPayments::select(DB::raw('sum(amount_payed) as totalpayed'))
+              ->where('debt_id','=',$debt['id'])
+              ->get()->first();
+
+              if ($payments['totalpayed']<$debt['amount']) {
+                $newpayment=DebtPayments::create($request->all());
+                 //update the debt
+                $payments=DebtPayments::select(DB::raw('sum(amount_payed) as totalpayed'))
+                ->where('debt_id','=',$debt['id'])
+                ->get()->first();
+
+                DB::update('update debts set sold = amount - ? where id = ?',[$payments['totalpayed'],$debt['id']]);
+                return $this->show($newpayment);
+            }else{
+                return null;
+            }
+        }
+    }
+
+        /**
+         * report payments by dates
+         */
+        public function reportpaymentsbydates(Request $request){
+            $customers=[];
+
+            if(isset($request['from']) && empty($request['to'])){
+                $request['to']=$request['from'];
+            } 
+            
+            if(empty($request['from']) && isset($request['to'])){
+                $request['from']=$request['to'];
+            }
+            
+            if(empty($request['from']) && empty($request['to'])){
+                $request['from']=date('Y-m-d');
+                $request['to']=date('Y-m-d');
+            }
+               
+            $customers=collect(Debts::join('debt_payments as P','debts.id','P.debt_id')
+            ->join('customer_controllers as C','debts.customer_id','C.id')
+            ->select('C.id',DB::raw('SUM(P.amount_payed) as total_payed'))
+            ->where('C.enterprise_id','=',$request['enterprise_id'])
+            ->whereBetween('P.done_at',[$request['from'].' 00:00:00',$request['to'].' 23:59:59'])
+            ->groupByRaw('C.id')
+            ->get()); 
+
+            $customers->map(function($customer) use ($request){
+                // $debts=collect(Debts::join('invoices as I','debts.invoice_id','=','I.id')
+                // ->where('I.enterprise_id','=',$request['enterprise_id'])
+                // ->where('debts.customer_id','=',$customer['customer_id'])
+                // ->where('sold','>',0)
+                // ->whereBetween('debts.done_at',[$request['from'].' 00:00:00',$request['to'].' 23:59:59'])
+                // ->get(['debts.*','debts.done_at as created_at','I.uuid','I.netToPay as total_invoice']));
+
+                    $debts=Debts::where('customer_id','=',$customer['id'])
+                    ->whereBetween('debts.done_at',[$request['from'].' 00:00:00',$request['to'].' 23:59:59'])
+                    ->get();
+                    
+                    $payments=DebtPayments::join('debts as D','debt_payments.debt_id','=','D.id')
+                    ->join('users as U','debt_payments.done_by_id','=','U.id')
+                    // ->join('invoices as I','D.invoice_id','=','I.id')
+                    ->where('D.customer_id','=',$customer['id'])
+                    ->whereBetween('debt_payments.done_at',[$request['from'].' 00:00:00',$request['to'].' 23:59:59'])
+                    ->get(['debt_payments.*','U.user_name as done_by_name']);
+
+                    $infos=CustomerController::where('id','=',$customer['id'])->select('customerName','phone','mail','adress','id as customer_id')->first();
+                    $customer['customerName']=$infos['customerName'];
+                    $customer['phone']=$infos['phone'];
+                    $customer['mail']=$infos['mail'];
+                    $customer['adress']=$infos['adress'];
+                    $customer['payments']=$payments;
+                    $customer['total_payed']=$payments->sum('amount_payed');
+                    $customer['total_debts']=$debts->sum('amount');
+                    $customer['total_sold']= $debts->sum('sold');
+                    return $customer;
+            });
+         
+            return response()->json([
+                "data"=>$customers,
+                "from"=>$request['from'],
+                "to"=>$request['to'],
+                "subtotaldebts"=>$customers->sum('total_debts'),
+                "subtotalpayments"=>$customers->sum('total_payed'),
+                "subtotalsolds"=>$customers->sum('total_sold'),
+                "money"=>$this->defaultmoney($request['enterprise_id'])
+            ]);
+        }
+
+      /**
+      * report payments by customers
+      */
+      public function paymentsbycutomersbasedondate(Request $request){
+        $customers=[];
+        if(isset($request['from']) && empty($request['to'])){
+            $request['to']=$request['from'];
+        } 
+        
+        if(empty($request['from']) && isset($request['to'])){
+            $request['from']=$request['to'];
+        }
+        
+        if(empty($request['from']) && empty($request['to'])){
+            $request['from']=date('Y-m-d');
+            $request['to']=date('Y-m-d');
+        }
+           
+        if(isset($request['customers']) && !empty($request['customers'])){
+            $customers=collect(CustomerController::whereIn('id',$request['customers'])->select('id','customerName','phone','mail','adress')->get());
+            $customers->transform(function ($customer) use ($request){
+                $debts=Debts::where('customer_id','=',$customer['id'])
+                ->get();
+                
+                $payments=DebtPayments::join('debts as D','debt_payments.debt_id','=','D.id')
+                ->join('users as U','debt_payments.done_by_id','=','U.id')
+                ->where('D.customer_id','=',$customer['id'])
+                ->whereBetween('debt_payments.done_at',[$request['from'].' 00:00:00',$request['to'].' 23:59:59'])
+                ->get(['debt_payments.*','U.user_name as done_by_name']);
+
+                $customer['total_payed']=$payments->sum('amount_payed');
+                $customer['total_debts']=$debts->sum('amount');
+                $customer['total_sold']=$debts->sum('sold');
+                $customer['payments']=$payments;
+                return $customer;
+            });
+        }
+        return response()->json([
+            "data"=>$customers,
+            "from"=>$request['from'],
+            "to"=>$request['to'],
+            "subtotaldebts"=>$customers->sum('total_debts'),
+            "subtotalpayments"=>$customers->sum('total_payed'),
+            "subtotalsolds"=>$customers->sum('total_sold'),
+            "money"=>$this->defaultmoney($request['enterprise_id'])
+        ]);
+      }
+
+    /**
+     * Display the specified resource.
+     *
+     * @param  \App\Models\DebtPayments  $debtPayments
+     * @return \Illuminate\Http\Response
+     */
+    public function show(DebtPayments $debtPayments)
+    {
+        return DebtPayments::leftjoin('debts as D','debt_payments.debt_id','=','D.id')
+        ->leftjoin('invoices as I','D.invoice_id','=','I.id')
+        ->leftjoin('customer_controllers as C','I.customer_id','=','C.id')
+        ->leftjoin('users as U','debt_payments.done_by_id','=','U.id')
+        ->where('debt_payments.id','=',$debtPayments['id'])
+        ->get(['debt_payments.*','C.customerName','C.id as customerId','I.id as invoiceId','U.user_name as done_by_name','D.amount as total_debt','D.sold'])->first();
+    }
+
+    /**
+     * Show the form for editing the specified resource.
+     *
+     * @param  \App\Models\DebtPayments  $debtPayments
+     * @return \Illuminate\Http\Response
+     */
+    public function edit(DebtPayments $debtPayments)
+    {
+        //
+    }
+
+    /**
+     * Update the specified resource in storage.
+     *
+     * @param  \App\Http\Requests\UpdateDebtPaymentsRequest  $request
+     * @param  \App\Models\DebtPayments  $debtPayments
+     * @return \Illuminate\Http\Response
+     */
+    public function update(UpdateDebtPaymentsRequest $request, DebtPayments $debtPayments)
+    {
+        return $debtPayments->update($request->all());
+    }
+
+    /**
+     * Remove the specified resource from storage.
+     *
+     * @param  \App\Models\DebtPayments  $debtPayments
+     * @return \Illuminate\Http\Response
+     */
+    public function destroy(DebtPayments $debtPayments)
+    {
+        return DebtPayments::destroy($debtPayments);
+    }
+}

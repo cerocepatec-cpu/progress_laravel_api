@@ -1,0 +1,46 @@
+# Laravel standard
+
+/node_modules
+/vendor
+
+/public/hot
+/public/storage
+/public/build
+/public/mix-manifest.json
+/public/css
+/public/js
+/public/fonts
+
+/storage/*.key
+/storage/*.log
+/storage/debugbar
+/storage/framework/cache/data
+/storage/framework/sessions
+/storage/framework/views
+/storage/telescope
+
+.env
+.env.local
+.env.*.backup
+.env.testing
+
+Homestead.json
+Homestead.yaml
+
+npm-debug.log
+yarn-error.log
+
+.phpunit.result.cache
+.phpunit.cache
+.php_cs.cache
+
+# IDE files
+/.idea
+/.vscode
+/*.iml
+*.sublime-workspace
+*.sublime-project
+
+# OS files
+.DS_Store
+Thumbs.db
