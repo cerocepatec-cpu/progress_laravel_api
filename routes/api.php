@@ -43,6 +43,7 @@ $registerMemberApplicationRoutes = function (): void {
 };
 
 $registerSharedBusinessRoutes = function (): void {
+    Route::get('accounting/members/{identifier}/ledger', [AccountingController::class, 'memberLedger']);
     Route::get('mlm/dashboard', [AccountingController::class, 'summary']);
     Route::get('mlm/members', [MemberController::class, 'index']);
     Route::get('wallet/overview', [AccountingController::class, 'summary']);
@@ -64,7 +65,7 @@ $registerBackofficeUserRoutes = function (): void {
     Route::get('members', [MemberController::class, 'index']);
     Route::get('members/{identifier}', [MemberController::class, 'show']);
 
-    Route::get('accounting/members/{identifier}/ledger', [AccountingController::class, 'memberLedger']);
+    
     Route::get('catalog/categories', [CatalogController::class, 'memberCategories']);
     Route::get('catalog/countries', [CatalogController::class, 'countries']);
     Route::get('catalog/cities', [CatalogController::class, 'cities']);

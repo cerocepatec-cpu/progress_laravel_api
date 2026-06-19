@@ -2,9 +2,11 @@
 
 namespace App\Services;
 
+use App\Http\Resources\MemberResource;
 use App\Models\User;
 use App\Support\LegacyPassword;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection as SupportCollection;
@@ -24,6 +26,49 @@ class MlmService
         'diamond_crowned' => 'member_code',
         'ambassador' => 'member_code',
         'ambassador_crowned' => 'member_code',
+    ];
+
+    private const QUALIFIED_TABLES_LEVELS = [
+        'builder' => [
+            'table' => 'builder',
+            'join_field' => 'member_id',
+            'user_field' => 'member_id',
+        ],
+        'sapphire' => [
+            'table' => 'sapphire',
+            'join_field' => 'member_code',
+            'user_field' => 'member_code',
+        ],
+        'ruby' => [
+            'table' => 'ruby',
+            'join_field' => 'member_code',
+            'user_field' => 'member_code',
+        ],
+        'emerald' => [
+            'table' => 'emerald',
+            'join_field' => 'member_code',
+            'user_field' => 'member_code',
+        ],
+        'diamond' => [
+            'table' => 'diamond',
+            'join_field' => 'member_code',
+            'user_field' => 'member_code',
+        ],
+        'diamond_crowned' => [
+            'table' => 'diamond_crowned',
+            'join_field' => 'member_code',
+            'user_field' => 'member_code',
+        ],
+        'ambassador' => [
+            'table' => 'ambassador',
+            'join_field' => 'member_code',
+            'user_field' => 'member_code',
+        ],
+        'ambassador_crowned' => [
+            'table' => 'ambassador_crowned',
+            'join_field' => 'member_code',
+            'user_field' => 'member_code',
+        ],
     ];
 
     private const MATRIX_LEVELS = [
@@ -406,40 +451,117 @@ class MlmService
         })->all();
     }
 
-    public function qualifiedMembers(string $level): Collection
+    public function qualifiedMembers(Request $request, string $level): array
     {
-        $joinField = self::QUALIFIED_TABLES[$level] ?? null;
+        $config = self::QUALIFIED_TABLES_LEVELS[$level] ?? null;
 
-        if (! $joinField) {
+        if (! $config) {
             throw ValidationException::withMessages([
                 'level' => 'Niveau inconnu.',
             ]);
         }
 
-        return User::query()
-            ->select('users.*', "{$level}.status as qualification_status")
-            ->join($level, "{$level}.{$joinField}", '=', "users.{$joinField}")
-            ->orderByRaw("({$level}.status = 'unpaid') DESC")
+        $table = $config['table'];
+        $joinField = $config['join_field'];
+        $userField = $config['user_field'];
+
+        $perPage = min(max((int) $request->input('per_page', 25), 1), 100);
+        $search = trim((string) $request->input('q', ''));
+
+        $query = DB::table($table)
+            ->join('users', "users.{$userField}", '=', "{$table}.{$joinField}")
+            ->select([
+                'users.member_code',
+                'users.member_id',
+                'users.name',
+                'users.lastname',
+                'users.pseudo',
+                'users.telephone',
+                'users.email',
+                'users.username',
+                'users.categorie_id',
+                'users.actual_level',
+                'users.member_statute',
+                'users.date',
+                "{$table}.status as qualification_status",
+            ]);
+
+        if ($search !== '') {
+            $terms = preg_split('/\s+/', $search, -1, PREG_SPLIT_NO_EMPTY);
+
+            $query->where(function ($main) use ($terms): void {
+                foreach ($terms as $term) {
+                    $main->orWhere(function ($sub) use ($term): void {
+                        $sub->where('users.member_id', 'like', "%{$term}%")
+                            ->orWhere('users.member_code', 'like', "%{$term}%")
+                            ->orWhere('users.username', 'like', "%{$term}%")
+                            ->orWhere('users.name', 'like', "%{$term}%")
+                            ->orWhere('users.lastname', 'like', "%{$term}%")
+                            ->orWhere('users.pseudo', 'like', "%{$term}%")
+                            ->orWhere('users.telephone', 'like', "%{$term}%")
+                            ->orWhere('users.email', 'like', "%{$term}%");
+                    });
+                }
+            });
+        }
+
+        $members = $query
+            ->orderByRaw("{$table}.status = 'unpaid' DESC")
             ->orderBy('users.member_code')
-            ->get();
+            ->paginate($perPage)
+            ->appends($request->query());
+
+        return [
+            'items' => collect($members->items())->map(fn($member) => [
+                'member_code' => $member->member_code,
+                'member_id' => $member->member_id,
+                'name' => $member->name,
+                'lastname' => $member->lastname,
+                'pseudo' => $member->pseudo,
+                'telephone' => $member->telephone,
+                'email' => $member->email,
+                'username' => $member->username,
+                'categorie_id' => $member->categorie_id,
+                'actual_level' => (int) $member->actual_level,
+                'member_statute' => $member->member_statute,
+                'qualification_status' => $member->qualification_status,
+                'registered_at' => $member->date,
+            ])->values(),
+            'meta' => [
+                'current_page' => $members->currentPage(),
+                'last_page' => $members->lastPage(),
+                'per_page' => $members->perPage(),
+                'total' => $members->total(),
+            ],
+        ];
     }
 
     public function validateLevelPayment(string $level, string|int $memberIdentifier): void
     {
-        $joinField = self::QUALIFIED_TABLES[$level] ?? null;
-        $member = $this->resolveMember($memberIdentifier);
+        $config = self::QUALIFIED_TABLES_LEVELS[$level] ?? null;
 
-        if (! $joinField) {
+        if (! $config) {
             throw ValidationException::withMessages([
                 'level' => 'Niveau inconnu.',
             ]);
         }
 
-        $value = $joinField === 'member_id' ? $member->member_id : $member->member_code;
+        $member = $this->resolveMember($memberIdentifier);
 
-        DB::table($level)
+        $table = $config['table'];
+        $joinField = $config['join_field'];
+        $userField = $config['user_field'];
+
+        $value = $userField === 'member_id'
+            ? $member->member_id
+            : $member->member_code;
+
+        DB::table($table)
             ->where($joinField, $value)
-            ->update(['status' => 'paid']);
+            ->update([
+                'status' => 'paid',
+                'updated_at' => now(),
+            ]);
     }
 
     public function permute(string|int $parentIdentifier, string|int $childIdentifier): array
@@ -688,7 +810,7 @@ class MlmService
                 'transaction_type' => 'adhesion',
                 'date_wayout' => now(),
             ]);
-            
+
             $this->notifications->push(
                 $payer->member_id,
                 'Votre compte E-wallet a ete deduit de ' . $amount . '$ pour l adhesion du membre ' . $newMember->name . ' ' . $newMember->lastname

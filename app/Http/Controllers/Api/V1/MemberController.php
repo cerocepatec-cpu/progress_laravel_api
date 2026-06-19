@@ -6,35 +6,81 @@ use App\Http\Resources\MemberResource;
 use App\Models\User;
 use App\Services\MlmService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 class MemberController extends ApiController
 {
     public function __construct(
         private readonly MlmService $mlm,
-    ) {
-    }
+    ) {}
+
+    private const QUALIFIED_LEVELS = [
+        'builder' => '1',
+        'sapphire' => '2',
+        'ruby' => '3',
+        'emerald' => '4',
+        'diamond' => '5',
+        'diamond_crowned' => '6',
+        'ambassador' => '7',
+        'ambassador_crowned' => '8',
+    ];
 
     public function index(Request $request)
     {
-        $members = User::query()
-            ->with('category')
-            ->when($request->filled('q'), function ($query) use ($request): void {
-                $query->where(function ($sub) use ($request): void {
-                    $sub->where('member_id', 'like', '%'.$request->string('q').'%')
-                        ->orWhere('username', 'like', '%'.$request->string('q').'%')
-                        ->orWhere('name', 'like', '%'.$request->string('q').'%')
-                        ->orWhere('lastname', 'like', '%'.$request->string('q').'%')
-                        ->orWhere('pseudo', 'like', '%'.$request->string('q').'%');
-                });
-            })
-            ->when($request->filled('categorie_id'), fn ($query) => $query->where('categorie_id', (int) $request->categorie_id))
-            ->when($request->filled('member_statute'), fn ($query) => $query->where('member_statute', $request->member_statute))
-            ->when($request->filled('sponsor_code'), fn ($query) => $query->where('sponsor_code', (int) $request->sponsor_code))
-            ->when($request->filled('parent_code'), fn ($query) => $query->where('parent_code', (int) $request->parent_code))
-            ->when($request->filled('actual_level'), fn ($query) => $query->where('actual_level', (int) $request->actual_level))
+        $baseQuery = $this->membersIndexQuery($request);
+
+        $members = (clone $baseQuery)
             ->orderByDesc('member_code')
             ->paginate((int) $request->input('per_page', 25));
+
+        $levelStatsQuery = $this->membersIndexQuery($request, ['actual_level']);
+
+        $levelsRows = (clone $levelStatsQuery)
+            ->selectRaw('COALESCE(actual_level, 0) as actual_level, COUNT(*) as total')
+            ->groupBy('actual_level')
+            ->get()
+            ->keyBy(fn($row) => (int) $row->actual_level);
+
+        $levels = collect(self::QUALIFIED_LEVELS)
+            ->map(function ($levelId, $key) use ($levelsRows) {
+                $level = (int) $levelId;
+                $row = $levelsRows->get($level);
+
+                return [
+                    'id' => $level,
+                    'key' => $key,
+                    'name' => ucwords(str_replace('_', ' ', $key)),
+                    'count' => (int) ($row->total ?? 0),
+                ];
+            })
+            ->values();
+
+        $categoryStatsQuery = $this->membersIndexQuery($request, ['categorie_id']);
+
+        $categoryRows = (clone $categoryStatsQuery)
+            ->selectRaw('COALESCE(categorie_id, 0) as categorie_id, COUNT(*) as total')
+            ->groupBy('categorie_id')
+            ->get()
+            ->keyBy(fn($row) => (int) $row->categorie_id);
+
+        $categories = DB::table('categories')
+            ->get()
+            ->map(function ($category) use ($categoryRows) {
+                $id = (int) ($category->categorie_id ?? $category->id ?? 0);
+                $row = $categoryRows->get($id);
+
+                return [
+                    'id' => $id,
+                    'name' => $category->name
+                        ?? $category->category_name
+                        ?? $category->categorie_name
+                        ?? $category->description
+                        ?? 'Catégorie ' . $id,
+                    'count' => (int) ($row->total ?? 0),
+                ];
+            })
+            ->values();
 
         return $this->ok([
             'items' => MemberResource::collection($members->items()),
@@ -44,7 +90,42 @@ class MemberController extends ApiController
                 'per_page' => $members->perPage(),
                 'total' => $members->total(),
             ],
+            'stats' => [
+                'total' => (clone $baseQuery)->count(),
+                'levels' => $levels,
+                'categories' => $categories,
+            ],
         ]);
+    }
+
+    private function membersIndexQuery(Request $request, array $except = [])
+    {
+        return User::query()
+            ->with('category')
+            ->when($request->filled('q') && ! in_array('q', $except, true), function ($query) use ($request): void {
+                $q = trim((string) $request->string('q'));
+                $terms = preg_split('/\s+/', $q, -1, PREG_SPLIT_NO_EMPTY);
+
+                $query->where(function ($main) use ($terms): void {
+                    foreach ($terms as $term) {
+                        $main->orWhere(function ($sub) use ($term): void {
+                            $sub->where('member_id', 'like', "%{$term}%")
+                                ->orWhere('member_code', 'like', "%{$term}%")
+                                ->orWhere('username', 'like', "%{$term}%")
+                                ->orWhere('name', 'like', "%{$term}%")
+                                ->orWhere('lastname', 'like', "%{$term}%")
+                                ->orWhere('pseudo', 'like', "%{$term}%")
+                                ->orWhere('telephone', 'like', "%{$term}%")
+                                ->orWhere('email', 'like', "%{$term}%");
+                        });
+                    }
+                });
+            })
+            ->when($request->filled('categorie_id') && ! in_array('categorie_id', $except, true), fn($query) => $query->where('categorie_id', (int) $request->categorie_id))
+            ->when($request->filled('member_statute') && ! in_array('member_statute', $except, true), fn($query) => $query->where('member_statute', $request->member_statute))
+            ->when($request->filled('sponsor_code') && ! in_array('sponsor_code', $except, true), fn($query) => $query->where('sponsor_code', (int) $request->sponsor_code))
+            ->when($request->filled('parent_code') && ! in_array('parent_code', $except, true), fn($query) => $query->where('parent_code', (int) $request->parent_code))
+            ->when($request->filled('actual_level') && ! in_array('actual_level', $except, true), fn($query) => $query->where('actual_level', (int) $request->actual_level));
     }
 
     public function store(Request $request)
@@ -144,4 +225,3 @@ class MemberController extends ApiController
         return $this->ok(null, 'Membre supprime.');
     }
 }
-

@@ -4,12 +4,13 @@ namespace App\Services;
 
 use App\Models\User;
 use App\Services\NotificationService;
+use App\Support\LegacyPassword;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\ValidationException;
-use App\Support\LegacyPassword;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 class AccountingService
 {
@@ -198,25 +199,135 @@ class AccountingService
         });
     }
 
-    public function memberLedger(User $member): array
+    public function memberLedger(Request $request, User $member): array
     {
+        $type = (string) $request->query('type', 'entries_member');
+        $perPage = min(max((int) $request->query('per_page', 10), 1), 100);
+
+        $search = trim((string) $request->query('search', ''));
+        $from = $request->query('from');
+        $to = $request->query('to');
+        $minAmount = $request->query('min_amount');
+        $maxAmount = $request->query('max_amount');
+        $transactionType = trim((string) $request->query('transaction_type', ''));
+
+        $memberIds = array_values(array_filter([
+            (string) $member->member_id,
+            (string) $member->member_code,
+            (string) $member->id,
+            (string) $member->email,
+        ]));
+
+        $configs = [
+            'entries_accountancy' => [
+                'table' => 'entries_accountancy',
+                'id' => 'id_entry_accountancy',
+                'date' => 'date_entry_accountancy',
+                'member_column' => 'member_id',
+                'search_columns' => ['wording', 'provenance_entry'],
+                'type_column' => 'provenance_entry',
+            ],
+
+            'entries_member' => [
+                'table' => 'entry_account_member',
+                'id' => 'id_entry',
+                'date' => 'date_entry',
+                'member_column' => 'member_id',
+                'search_columns' => ['wording', 'transaction_type'],
+                'type_column' => 'transaction_type',
+            ],
+
+            'wayouts_accountancy' => [
+                'table' => 'wayout_accountancy',
+                'id' => 'id_entry_accountancy',
+                'date' => 'date_wayout_accountancy',
+                'member_column' => 'done_by',
+                'search_columns' => ['wording', 'provenance_wayout', 'done_by'],
+                'type_column' => 'provenance_wayout',
+            ],
+
+            'wayouts_member' => [
+                'table' => 'wayout_account_member',
+                'id' => 'id_wayout',
+                'date' => 'date_wayout',
+                'member_column' => 'member_id',
+                'search_columns' => ['wording', 'transaction_type'],
+                'type_column' => 'transaction_type',
+            ],
+
+            'incoming_transactions' => [
+                'table' => 'transactions_accounts',
+                'id' => 'id',
+                'date' => 'date_transaction',
+                'member_column' => 'member_id_destination',
+                'search_columns' => ['wording', 'member_id_source', 'member_id_destination'],
+                'type_column' => 'wording',
+            ],
+
+            'outgoing_transactions' => [
+                'table' => 'transactions_accounts',
+                'id' => 'id',
+                'date' => 'date_transaction',
+                'member_column' => 'member_id_source',
+                'search_columns' => ['wording', 'member_id_source', 'member_id_destination'],
+                'type_column' => 'wording',
+            ],
+        ];
+
+        if (! isset($configs[$type])) {
+            abort(422, 'Type de relevé invalide.');
+        }
+
+        $config = $configs[$type];
+
+        $query = DB::table($config['table'])
+            ->whereIn($config['member_column'], $memberIds);
+
+        if ($search !== '') {
+            $terms = preg_split('/\s+/', $search, -1, PREG_SPLIT_NO_EMPTY);
+
+            $query->where(function ($mainQuery) use ($terms, $config) {
+                foreach ($terms as $term) {
+                    $mainQuery->orWhere(function ($termQuery) use ($term, $config) {
+                        foreach ($config['search_columns'] as $column) {
+                            $termQuery->orWhere($column, 'like', "%{$term}%");
+                        }
+                    });
+                }
+            });
+        }
+
+        if ($transactionType !== '' && $config['type_column']) {
+            $query->where($config['type_column'], 'like', "%{$transactionType}%");
+        }
+
+        if ($from) {
+            $query->whereDate($config['date'], '>=', $from);
+        }
+
+        if ($to) {
+            $query->whereDate($config['date'], '<=', $to);
+        }
+
+        if ($minAmount !== null && $minAmount !== '') {
+            $query->where('amount', '>=', (float) $minAmount);
+        }
+
+        if ($maxAmount !== null && $maxAmount !== '') {
+            $query->where('amount', '<=', (float) $maxAmount);
+        }
+
+        $totalAmount = (clone $query)->sum('amount');
+
+        $items = $query
+            ->orderByDesc($config['date'])
+            ->paginate($perPage)
+            ->appends($request->query());
+
         return [
-            'entries' => DB::table('entry_account_member')
-                ->where('member_id', $member->member_id)
-                ->orderByDesc('date_entry')
-                ->get(),
-            'wayouts' => DB::table('wayout_account_member')
-                ->where('member_id', $member->member_id)
-                ->orderByDesc('date_wayout')
-                ->get(),
-            'incoming_transactions' => DB::table('transactions_accounts')
-                ->where('member_id_destination', $member->member_id)
-                ->orderByDesc('date_transaction')
-                ->get(),
-            'outgoing_transactions' => DB::table('transactions_accounts')
-                ->where('member_id_source', $member->member_id)
-                ->orderByDesc('date_transaction')
-                ->get(),
+            'type' => $type,
+            'total_amount' => (float) $totalAmount,
+            'data' => $items,
         ];
     }
 
@@ -402,7 +513,7 @@ class AccountingService
             ]);
         }
         return DB::transaction(function () use ($actor, $number, $total): array {
-        
+
             $member = $this->lockMember($actor->member_code);
 
             if ((float) $member->total_amount_e_wallet < $total) {

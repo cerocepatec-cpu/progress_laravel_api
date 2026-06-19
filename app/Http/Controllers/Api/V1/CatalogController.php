@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Models\CategoryProduct;
+use App\Models\Uom;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -72,17 +74,74 @@ class CatalogController extends ApiController
         return $this->ok(DB::table('uoms')->orderBy('id')->get());
     }
 
-    public function products()
+
+    public function products(Request $request)
     {
-        return $this->ok(
-            DB::table('products as p')
-                ->leftJoin('categoriesproducts as c', 'p.category_id', '=', 'c.id')
-                ->leftJoin('uoms as u', 'p.uom_id', '=', 'u.id')
-                ->where('p.status', '<>', 'deleted')
-                ->select('p.*', 'c.name as category_name', 'u.name as uom_name')
-                ->orderBy('p.id')
-                ->get()
-        );
+        $perPage = min(max((int) $request->input('per_page', 25), 1), 100);
+        $search = trim((string) $request->input('q', ''));
+        $categoryId = $request->input('category_id');
+        $uomId = $request->input('uom_id');
+        $status = $request->input('status');
+
+        $query = DB::table('products as p')
+            ->leftJoin('categoriesproducts as c', 'p.category_id', '=', 'c.id')
+            ->leftJoin('uoms as u', 'p.uom_id', '=', 'u.id')
+            ->select(
+                'p.id',
+                'p.name',
+                'p.description',
+                'p.category_id',
+                'p.uom_id',
+                'p.created_at',
+                'p.updated_at',
+                'p.added_by',
+                'p.status',
+                'c.name as category_name',
+                'u.name as uom_name'
+            );
+
+        if ($search !== '') {
+            $terms = preg_split('/\s+/', $search, -1, PREG_SPLIT_NO_EMPTY);
+
+            $query->where(function ($main) use ($terms): void {
+                foreach ($terms as $term) {
+                    $main->orWhere(function ($sub) use ($term): void {
+                        $sub->where('p.name', 'like', "%{$term}%")
+                            ->orWhere('p.description', 'like', "%{$term}%")
+                            ->orWhere('c.name', 'like', "%{$term}%")
+                            ->orWhere('u.name', 'like', "%{$term}%")
+                            ->orWhere('p.status', 'like', "%{$term}%");
+                    });
+                }
+            });
+        }
+
+        if ($categoryId !== null && $categoryId !== '') {
+            $query->where('p.category_id', (int) $categoryId);
+        }
+
+        if ($uomId !== null && $uomId !== '') {
+            $query->where('p.uom_id', (int) $uomId);
+        }
+
+        if ($status !== null && $status !== '') {
+            $query->where('p.status', $status);
+        }
+
+        $products = $query
+            ->orderByDesc('p.id')
+            ->paginate($perPage)
+            ->appends($request->query());
+
+        return $this->ok([
+            'items' => $products->items(),
+            'meta' => [
+                'current_page' => $products->currentPage(),
+                'last_page' => $products->lastPage(),
+                'per_page' => $products->perPage(),
+                'total' => $products->total(),
+            ],
+        ]);
     }
 
     public function storeCountry(Request $request)
@@ -137,7 +196,7 @@ class CatalogController extends ApiController
                 'updatedAt' => now(),
             ]);
 
-            return $this->ok(['id' => (int) $data['id']], 'Categorie produit mise a jour.');
+            return $this->ok(CategoryProduct::find($data['id']), 'Categorie produit mise a jour.');
         }
 
         $id = (int) ((DB::table('categoriesproducts')->max('id') ?? 0) + 1);
@@ -150,7 +209,7 @@ class CatalogController extends ApiController
             'added_by' => auth()->user()?->member_id,
         ]);
 
-        return $this->ok(['id' => $id], 'Categorie produit creee.', 201);
+        return $this->ok(CategoryProduct::find($id), 'Categorie produit creee.', 201);
     }
 
     public function deleteProductCategory(int $category)
@@ -169,17 +228,17 @@ class CatalogController extends ApiController
         ]);
 
         if (! empty($data['id'])) {
-            DB::table('uoms')->where('id', (int) $data['id'])->update([
+            $updated=DB::table('uoms')->where('id', (int) $data['id'])->update([
                 'name' => $data['name'],
                 'description' => $data['description'] ?? null,
                 'updatedAt' => now(),
             ]);
 
-            return $this->ok(['id' => (int) $data['id']], 'Unite mise a jour.');
+            return $this->ok(Uom::find($data['id']), 'Unite mise a jour.');
         }
 
         $id = (int) ((DB::table('uoms')->max('id') ?? 0) + 1);
-        DB::table('uoms')->insert([
+        $new=DB::table('uoms')->insert([
             'id' => $id,
             'name' => $data['name'],
             'description' => $data['description'] ?? null,
@@ -188,7 +247,7 @@ class CatalogController extends ApiController
             'added_by' => auth()->user()?->member_code,
         ]);
 
-        return $this->ok(['id' => $id], 'Unite creee.', 201);
+        return $this->ok(Uom::find($id), 'Unite creee.', 201);
     }
 
     public function deleteUom(int $uom)
@@ -207,9 +266,7 @@ class CatalogController extends ApiController
             'uom_id' => ['nullable', 'integer'],
         ]);
 
-        $id = (int) ((DB::table('products')->max('id') ?? 0) + 1);
-        DB::table('products')->insert([
-            'id' => $id,
+        $id = DB::table('products')->insertGetId([
             'name' => $data['name'],
             'description' => $data['description'] ?? null,
             'category_id' => $data['category_id'] ?? null,

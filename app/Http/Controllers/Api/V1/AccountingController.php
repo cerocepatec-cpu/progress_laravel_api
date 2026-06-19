@@ -94,11 +94,11 @@ class AccountingController extends ApiController
         return $this->ok($result, 'Transfert effectue.');
     }
 
-    public function memberLedger(string $identifier)
+    public function memberLedger(Request $request, string $identifier)
     {
         $member = $this->mlm->resolveMember($identifier);
 
-        return $this->ok($this->accounting->memberLedger($member));
+        return $this->ok($this->accounting->memberLedger($request,$member));
     }
 
     public function cashOperations(Request $request)

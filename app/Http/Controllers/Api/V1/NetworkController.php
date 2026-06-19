@@ -13,6 +13,7 @@ class NetworkController extends ApiController
         private readonly MlmService $mlm,
     ) {}
 
+
     public function directs(Request $request)
     {
         $items = $this->mlm->directs($request->user());
@@ -53,11 +54,11 @@ class NetworkController extends ApiController
         return $this->ok($result, 'Permutation effectuee avec succes.');
     }
 
-    public function qualified(string $level)
+    public function qualified(Request $request, string $level)
     {
-        $items = $this->mlm->qualifiedMembers($level);
+        $items = $this->mlm->qualifiedMembers($request, $level);
 
-        return $this->ok(MemberResource::collection($items));
+        return $this->ok($items);
     }
 
     public function validateLevelPayment(Request $request, string $level)

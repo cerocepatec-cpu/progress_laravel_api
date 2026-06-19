@@ -65,7 +65,7 @@ class InventoryService
         }
 
         $users = DB::table('depositusers as du')
-            ->join('members as m', 'du.user_id', '=', 'm.member_id')
+            ->join('users as m', 'du.user_id', '=', 'm.member_id')
             ->where('du.deposit_id', $depositId)
             ->select('du.id as affectation_id', 'du.access', 'm.member_code', 'm.member_id', 'm.name', 'm.lastname', 'm.pseudo')
             ->orderBy('m.member_code')
@@ -183,14 +183,40 @@ class InventoryService
 
     public function stockValues(User $actor)
     {
-        return DB::table('depositproducts as dp')
+        $base = DB::table('depositproducts as dp')
             ->join('deposits as d', 'd.id', '=', 'dp.deposit_id')
             ->join('depositusers as du', 'du.deposit_id', '=', 'd.id')
-            ->where('du.user_id', $actor->member_id)
-            ->selectRaw('dp.deposit_id, d.name as deposit_name, SUM(dp.quantity * dp.price_sold) as stock_value')
-            ->groupBy('dp.deposit_id', 'd.name')
+            ->where('du.user_id', $actor->member_id);
+
+        $totals = (clone $base)
+            ->selectRaw('
+            SUM(dp.quantity * dp.price_gros) as wholesale_value,
+            SUM(dp.quantity * dp.price_detail) as retail_value,
+            SUM(dp.quantity * dp.price_sold) as sale_value
+        ')
+            ->first();
+
+        $deposits = (clone $base)
+            ->selectRaw('
+            dp.deposit_id,
+            d.name as deposit_name,
+            d.description as deposit_description,
+            SUM(dp.quantity * dp.price_gros) as wholesale_value,
+            SUM(dp.quantity * dp.price_detail) as retail_value,
+            SUM(dp.quantity * dp.price_sold) as sale_value
+        ')
+            ->groupBy('dp.deposit_id', 'd.name', 'd.description')
             ->orderBy('d.name')
             ->get();
+
+        return [
+            'totals' => [
+                'wholesale_value' => (float) ($totals->wholesale_value ?? 0),
+                'retail_value' => (float) ($totals->retail_value ?? 0),
+                'sale_value' => (float) ($totals->sale_value ?? 0),
+            ],
+            'deposits' => $deposits,
+        ];
     }
 
     public function storeMovement(array $payload, User $actor): int
@@ -251,7 +277,7 @@ class InventoryService
                 ->where('deposit_id', $depositId)
                 ->where('product_id', $productId)
                 ->update([
-                    'quantity' => DB::raw('quantity '.($type === 'entry' ? '+' : '-').' '.(float) $quantity),
+                    'quantity' => DB::raw('quantity ' . ($type === 'entry' ? '+' : '-') . ' ' . (float) $quantity),
                     'updated_at' => now(),
                 ]);
 
@@ -334,7 +360,7 @@ class InventoryService
             DB::table('depositproducts')
                 ->where('id', $source->id)
                 ->update([
-                    'quantity' => DB::raw('quantity - '.(float) $quantity),
+                    'quantity' => DB::raw('quantity - ' . (float) $quantity),
                     'updated_at' => now(),
                 ]);
 
@@ -380,7 +406,7 @@ class InventoryService
                 DB::table('depositproducts')
                     ->where('id', $destination->id)
                     ->update([
-                        'quantity' => DB::raw('quantity + '.(float) $quantity),
+                        'quantity' => DB::raw('quantity + ' . (float) $quantity),
                         'updated_at' => now(),
                     ]);
             }
@@ -461,7 +487,7 @@ class InventoryService
                 DB::table('depositproducts')
                     ->where('id', $destination->id)
                     ->update([
-                        'quantity' => DB::raw('quantity - '.(float) $transfer->quantity),
+                        'quantity' => DB::raw('quantity - ' . (float) $transfer->quantity),
                         'updated_at' => now(),
                     ]);
             }
@@ -476,7 +502,7 @@ class InventoryService
                 DB::table('depositproducts')
                     ->where('id', $source->id)
                     ->update([
-                        'quantity' => DB::raw('quantity + '.(float) $transfer->quantity),
+                        'quantity' => DB::raw('quantity + ' . (float) $transfer->quantity),
                         'updated_at' => now(),
                     ]);
             }
@@ -547,4 +573,3 @@ class InventoryService
         return (int) $actor->member_code === 1 || in_array((int) $actor->categorie_id, [6, 9], true);
     }
 }
-
