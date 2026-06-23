@@ -87,7 +87,7 @@ class InvoiceService
             $type = $payload['type_facture'];
             $totalReceived = $type === 'cash' ? $total : (float) ($payload['total_received'] ?? 0);
 
-            $newInvoice=Invoice::create([
+            $newInvoice = Invoice::create([
                 'edited_by_id' => $actor->member_id,
                 'customer_id' => $payload['customer_id'] ?? null,
                 'customer_name' => $payload['customer_name'] ?? null,
@@ -104,7 +104,7 @@ class InvoiceService
             ]);
 
             foreach ($details as $line) {
-                $inventory =DepositProduct::where('deposit_id', (int) $line['deposit_id'])
+                $inventory = DepositProduct::where('deposit_id', (int) $line['deposit_id'])
                     ->where('product_id', (int) $line['product_id'])
                     ->lockForUpdate()
                     ->first();
@@ -135,7 +135,7 @@ class InvoiceService
                         ]);
                     }
 
-                    $memberExists =User::where('member_code', $payload['customer_id'])
+                    $memberExists = User::where('member_code', $payload['customer_id'])
                         ->orWhere('member_id', $payload['customer_id'])
                         ->exists();
 
@@ -180,7 +180,7 @@ class InvoiceService
                     ? (float) ($line['point'] ?? $inventory->point ?? 0) * (float) $line['quantity']
                     : 0;
 
-               InvoiceDetail::create([
+                InvoiceDetail::create([
                     'product_id' => (int) $line['product_id'],
                     'invoice_id' => $newInvoice->id,
                     'deposit_id' => (int) $line['deposit_id'],
@@ -221,5 +221,86 @@ class InvoiceService
 
             return $newInvoice->id;
         });
+    }
+
+    public function listByUserPaginated(User $actor, array $filters = []): array
+    {
+        $from = $filters['from'] ?? now()->toDateString();
+        $to = $filters['to'] ?? now()->toDateString();
+        $perPage = (int) ($filters['per_page'] ?? 15);
+
+        $query = DB::table('invoices as i')
+            ->leftJoin('users as m', 'm.member_id', '=', 'i.customer_id')
+            ->where('i.edited_by_id', $actor->member_id)
+            ->whereBetween(DB::raw('DATE(i.created_at)'), [$from, $to])
+            ->select(
+                'i.*',
+                'm.name',
+                'm.lastname',
+                'm.pseudo',
+                'm.member_id'
+            );
+
+        if (! empty($filters['q'])) {
+            $q = $filters['q'];
+
+            $query->where(function ($builder) use ($q) {
+                $builder
+                    ->where('i.uuid', 'like', "%{$q}%")
+                    ->orWhere('i.customer_name', 'like', "%{$q}%")
+                    ->orWhere('i.customer_id', 'like', "%{$q}%")
+                    ->orWhere('m.name', 'like', "%{$q}%")
+                    ->orWhere('m.lastname', 'like', "%{$q}%")
+                    ->orWhere('m.pseudo', 'like', "%{$q}%");
+            });
+        }
+
+        if (! empty($filters['type_facture'])) {
+            $query->where('i.type_facture', $filters['type_facture']);
+        }
+
+        if (! empty($filters['nature'])) {
+            $query->where('i.nature', $filters['nature']);
+        }
+
+        if (! empty($filters['status'])) {
+            $query->where('i.status', $filters['status']);
+        }
+
+        $summaryBase = clone $query;
+
+        $summary = $summaryBase
+            ->select(
+                'i.type_facture',
+                DB::raw('COUNT(*) as count'),
+                DB::raw('SUM(i.total) as total'),
+                DB::raw('SUM(i.total_received) as total_received')
+            )
+            ->groupBy('i.type_facture')
+            ->get();
+
+        $paginator = $query
+            ->orderByDesc('i.id')
+            ->paginate($perPage);
+
+        $items = collect($paginator->items())
+            ->map(fn($invoice) => $this->details((int) $invoice->id))
+            ->values();
+
+        return [
+            'items' => $items,
+            'meta' => [
+                'current_page' => $paginator->currentPage(),
+                'per_page' => $paginator->perPage(),
+                'last_page' => $paginator->lastPage(),
+                'total' => $paginator->total(),
+            ],
+            'summary' => [
+                'count' => $summary->sum('count'),
+                'total' => round((float) $summary->sum('total'), 2),
+                'total_received' => round((float) $summary->sum('total_received'), 2),
+                'by_type' => $summary,
+            ],
+        ];
     }
 }

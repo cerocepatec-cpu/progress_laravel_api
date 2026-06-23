@@ -11,18 +11,27 @@ class InvoiceController extends ApiController
 {
     public function __construct(
         private readonly InvoiceService $invoices,
-    ) {
-    }
+    ) {}
 
     public function index(Request $request)
     {
-        $items = $this->invoices->listByUser(
+        $data = $request->validate([
+            'from' => ['nullable', 'date'],
+            'to' => ['nullable', 'date'],
+            'q' => ['nullable', 'string'],
+            'type_facture' => ['nullable', 'in:cash,credit'],
+            'nature' => ['nullable', 'in:products,solds,maj'],
+            'status' => ['nullable', 'string'],
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        $result = $this->invoices->listByUserPaginated(
             $request->user(),
-            $request->input('from'),
-            $request->input('to')
+            $data
         );
 
-        return $this->ok(InvoiceResource::collection($items));
+        return $this->ok($result);
     }
 
     public function show(int $invoice)
