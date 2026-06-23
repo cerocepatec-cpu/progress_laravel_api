@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\CategoryProduct;
+use App\Models\City;
 use App\Models\Uom;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -63,6 +64,35 @@ class CatalogController extends ApiController
 
         return $this->ok($query->get());
     }
+
+    public function storeCity(Request $request)
+{
+    $data = $request->validate([
+        'country_id' => ['required', 'integer', 'exists:countries,id'],
+        'name' => ['required', 'string', 'max:255'],
+    ]);
+
+    $exists = City::query()
+        ->where('country_id', $data['country_id'])
+        ->whereRaw('LOWER(name) = ?', [mb_strtolower(trim($data['name']))])
+        ->exists();
+
+    if ($exists) {
+        return response()->json([
+            'message' => 'Cette ville existe déjà pour ce pays.',
+        ], 422);
+    }
+
+    $city = City::create([
+        'country_id' => $data['country_id'],
+        'name' => trim($data['name']),
+    ]);
+
+    return response()->json([
+        'message' => 'Ville ajoutée avec succès.',
+        'data' => $city,
+    ], 201);
+}
 
     public function productCategories()
     {

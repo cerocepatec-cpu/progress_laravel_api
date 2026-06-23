@@ -49,6 +49,6 @@ class InvoiceController extends ApiController
 
         $id = $this->invoices->create($request->user(), $data);
 
-        return $this->ok(['id' => $id], 'Facture enregistree.', 201);
+        return $this->show($id);
     }
 }

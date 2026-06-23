@@ -16,6 +16,15 @@ class City extends Model
 
     protected $guarded = [];
 
+    protected $fillable = [
+        'country_id',
+        'name',
+    ];
+
+    public function country()
+    {
+        return $this->belongsTo(Country::class);
+    }
     protected function casts(): array
     {
         return [
@@ -24,4 +33,3 @@ class City extends Model
         ];
     }
 }
-

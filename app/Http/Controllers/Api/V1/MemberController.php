@@ -154,12 +154,35 @@ class MemberController extends ApiController
             'payment_evidence' => ['nullable', 'integer'],
             'city' => ['nullable', 'integer'],
         ]);
-
         $member = $this->mlm->register($data, $request->user());
-
         return $this->ok(MemberResource::make($member), 'Membre enregistre avec succes.', 201);
     }
 
+    public function storeNormal(Request $request)
+    {
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:100'],
+            'lastname' => ['nullable', 'string', 'max:100'],
+            'pseudo' => ['nullable', 'string', 'max:100'],
+            'telephone' => ['nullable', 'string', 'max:50'],
+            'email' => ['nullable', 'email'],
+            'gender' => ['nullable', 'in:M,F'],
+            'username' => ['required', 'string', 'max:100'],
+            'password' => ['required', 'string', 'max:255'],
+            'categorie_id' => ['nullable', 'integer'],
+            'adress' => ['nullable', 'string'],
+            'city' => ['nullable', 'integer'],
+        ]);
+
+        $user = $this->mlm->registerNormalUser($data);
+
+        return $this->ok(
+            MemberResource::make($user),
+            'Utilisateur enregistré avec succès.',
+            201
+        );
+    }
+    
     public function show(string $identifier)
     {
         $member = $this->mlm->resolveMember($identifier)->load('category');

@@ -10,7 +10,7 @@ class StockMouvement extends Model
 
     protected $primaryKey = 'id';
 
-    public $incrementing = false;
+    public $incrementing = true;
 
     protected $guarded = [];
 
@@ -25,7 +25,7 @@ class StockMouvement extends Model
             'total' => 'float',
             'done_at' => 'datetime',
             'expiration_date' => 'date',
-            'motif' => 'integer',
+            'motif' => 'string',
             'stock_before' => 'float',
             'sold' => 'float',
         ];

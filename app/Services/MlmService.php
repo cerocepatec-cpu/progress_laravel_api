@@ -453,6 +453,7 @@ class MlmService
 
     public function qualifiedMembers(Request $request, string $level): array
     {
+        $level = $this->normalizeQualifiedLevel($level);
         $config = self::QUALIFIED_TABLES_LEVELS[$level] ?? null;
 
         if (! $config) {
@@ -538,6 +539,7 @@ class MlmService
 
     public function validateLevelPayment(string $level, string|int $memberIdentifier): void
     {
+        $level = $this->normalizeQualifiedLevel($level);
         $config = self::QUALIFIED_TABLES_LEVELS[$level] ?? null;
 
         if (! $config) {
@@ -592,11 +594,13 @@ class MlmService
 
         return DB::transaction(function () use ($placementParent, $child): array {
             $oldParentCode = (int) $child->parent_code;
+            $nextId = DB::table('permutation_mouvements')->max('id_permutation') + 1;
 
-            DB::table('permutation_mouvements')->insert([
-                'old_parent_code' => $oldParentCode,
-                'new_parent_code' => $placementParent->member_code,
-                'member_code' => (string) $child->member_code,
+             DB::table('permutation_mouvements')->insertGetId([
+                'id_permutation'   => $nextId,
+                'old_parent_code'  => $oldParentCode,
+                'new_parent_code'  => $placementParent->member_code,
+                'member_code'      => (string) $child->member_code,
                 'date_permutation' => now(),
             ]);
 
@@ -952,6 +956,76 @@ class MlmService
         return User::query()->where('member_id', $memberId)->firstOrFail();
     }
 
+
+public function registerNormalUser(array $payload): User
+{
+    return DB::transaction(function () use ($payload): User {
+        $username = trim((string) ($payload['username'] ?? ''));
+        $email = trim((string) ($payload['email'] ?? ''));
+        $password = (string) ($payload['password'] ?? '');
+
+        if ($username === '') {
+            throw ValidationException::withMessages([
+                'username' => 'Le nom utilisateur est obligatoire.',
+            ]);
+        }
+
+        if ($password === '') {
+            throw ValidationException::withMessages([
+                'password' => 'Le mot de passe est obligatoire.',
+            ]);
+        }
+
+        if (User::query()->where('username', $username)->exists()) {
+            throw ValidationException::withMessages([
+                'username' => 'Ce nom utilisateur existe déjà.',
+            ]);
+        }
+
+        if ($email !== '' && User::query()->where('email', $email)->exists()) {
+            throw ValidationException::withMessages([
+                'email' => 'Cette adresse email existe déjà.',
+            ]);
+        }
+
+        $memberCode = ((int) User::query()->max('member_code')) + 1;
+
+        return User::query()->create([
+            'member_code' => $memberCode,
+            'member_id' => (string) ($payload['member_id'] ?? now()->format('YmdHis')),
+            'name' => $payload['name'],
+            'lastname' => $payload['lastname'] ?? '',
+            'pseudo' => $payload['pseudo'] ?? '',
+            'telephone' => $payload['telephone'] ?? '',
+            'email' => $email !== '' ? $email : null,
+            'gender' => $payload['gender'] ?? null,
+
+            'username' => $username,
+            'password' => $this->legacyPassword->hashForStorage($password),
+
+            'date' => now(),
+            'categorie_id' => $payload['categorie_id'] ?? null,
+
+            // aucune logique MLM
+            'parent_code' => 0,
+            'sponsor_code' => 0,
+            'actual_level' => 0,
+            'inscription_mode' => 'normal',
+
+            'e_mobile_number' => $payload['e_mobile_number'] ?? '',
+            'bank_name' => $payload['bank_name'] ?? '',
+            'bank_account' => $payload['bank_account'] ?? '',
+            'total_amount_e_wallet' => $payload['total_amount_e_wallet'] ?? 0,
+            'password_e_wallet' => $this->legacyPassword->hashForStorage(
+                $payload['password_e_wallet'] ?? $password
+            ),
+            'member_statute' => $payload['member_statute'] ?? 'enabled',
+            'pdfpaquet' => $payload['pdfpaquet'] ?? 0,
+            'adress' => $payload['adress'] ?? null,
+            'city' => $payload['city'] ?? null,
+        ]);
+    });
+}
     private function afterMemberInserted(User $root, User $placementParent): void
     {
         if ($this->childrenCount((int) $placementParent->member_code) >= 4) {
@@ -1189,6 +1263,34 @@ class MlmService
         }
 
         return $depthMap;
+    }
+
+    private function normalizeQualifiedLevel(string $level): string
+    {
+        $level = trim($level);
+
+        $aliases = [
+            'builder' => 'builder',
+            'sapphire' => 'sapphire',
+            'ruby' => 'ruby',
+            'emerald' => 'emerald',
+            'diamond' => 'diamond',
+            'diamondcrowned' => 'diamond_crowned',
+            'diamond_crowned' => 'diamond_crowned',
+            'diamond-crowned' => 'diamond_crowned',
+            'diamond crowned' => 'diamond_crowned',
+            'ambassador' => 'ambassador',
+            'ambassadorcrowned' => 'ambassador_crowned',
+            'ambassador_crowned' => 'ambassador_crowned',
+            'ambassador-crowned' => 'ambassador_crowned',
+            'ambassador crowned' => 'ambassador_crowned',
+        ];
+
+        $key = strtolower(preg_replace('/(?<!^)[A-Z]/', '_$0', $level));
+        $key = str_replace(['__', '-'], ['_', '_'], $key);
+        $compact = str_replace(['_', ' '], '', strtolower($level));
+
+        return $aliases[$key] ?? $aliases[$compact] ?? $key;
     }
 
     private function updateMemberBalance(int $memberCode, float $delta): void

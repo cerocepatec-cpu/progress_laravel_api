@@ -2,7 +2,10 @@
 
 namespace App\Services;
 
+use App\Models\DepositProduct;
 use App\Models\Invoice;
+use App\Models\InvoiceDetail;
+use App\Models\StockMouvement;
 use App\Models\User;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
@@ -20,13 +23,13 @@ class InvoiceService
             ->whereBetween(DB::raw('DATE(created_at)'), [$from, $to])
             ->orderByDesc('id')
             ->get()
-            ->map(fn ($invoice) => $this->details((int) $invoice->id));
+            ->map(fn($invoice) => $this->details((int) $invoice->id));
     }
 
     public function details(int $invoiceId): array
     {
         $invoice = DB::table('invoices as i')
-            ->leftJoin('members as m', 'm.member_id', '=', 'i.customer_id')
+            ->leftJoin('users as m', 'm.member_id', '=', 'i.customer_id')
             ->where('i.id', $invoiceId)
             ->select('i.*', 'm.name', 'm.lastname', 'm.pseudo', 'm.member_id')
             ->first();
@@ -53,7 +56,7 @@ class InvoiceService
             ->get();
 
         return [
-            ... (array) $invoice,
+            ...(array) $invoice,
             'customer' => $invoice->member_id ? [
                 'member_id' => $invoice->member_id,
                 'name' => $invoice->name,
@@ -75,31 +78,33 @@ class InvoiceService
         }
 
         return DB::transaction(function () use ($actor, $payload, $details): int {
-            $total = collect($details)->sum(fn (array $line): float => (float) $line['quantity'] * (float) $line['price']);
+            $nature = $payload['nature'] ?? 'products';
+
+            $total = collect($details)->sum(
+                fn(array $line): float => (float) $line['quantity'] * (float) $line['price']
+            );
+
             $type = $payload['type_facture'];
             $totalReceived = $type === 'cash' ? $total : (float) ($payload['total_received'] ?? 0);
 
-            $invoiceId = (int) ((DB::table('invoices')->max('id') ?? 0) + 1);
-
-            DB::table('invoices')->insert([
-                'id' => $invoiceId,
+            $newInvoice=Invoice::create([
                 'edited_by_id' => $actor->member_id,
                 'customer_id' => $payload['customer_id'] ?? null,
+                'customer_name' => $payload['customer_name'] ?? null,
                 'total' => $total,
                 'type_facture' => $type,
                 'note' => $payload['note'] ?? null,
                 'status' => 'validated',
-                'uuid' => now()->format('YmdHis').str_pad((string) random_int(0, 999), 3, '0', STR_PAD_LEFT),
+                'uuid' => now()->format('YmdHis') . str_pad((string) random_int(0, 999), 3, '0', STR_PAD_LEFT),
                 'total_received' => $totalReceived,
                 'done_at' => now()->toDateString(),
                 'created_at' => now(),
                 'updated_at' => now(),
-                'nature' => $payload['nature'] ?? 'products',
+                'nature' => $nature,
             ]);
 
             foreach ($details as $line) {
-                $inventory = DB::table('depositproducts')
-                    ->where('deposit_id', (int) $line['deposit_id'])
+                $inventory =DepositProduct::where('deposit_id', (int) $line['deposit_id'])
                     ->where('product_id', (int) $line['product_id'])
                     ->lockForUpdate()
                     ->first();
@@ -110,20 +115,74 @@ class InvoiceService
                     ]);
                 }
 
-                if ((float) $inventory->quantity < (float) $line['quantity']) {
+                $stockField = $nature === 'solds' ? 'quantity_sold' : 'quantity';
+                $availableQuantity = (float) ($inventory->{$stockField} ?? 0);
+
+                if ($availableQuantity < (float) $line['quantity']) {
                     throw ValidationException::withMessages([
-                        'details' => 'Stock insuffisant pour au moins un produit facture.',
+                        'details' => $nature === 'solds'
+                            ? 'Stock soldé insuffisant pour au moins un produit facturé.'
+                            : 'Stock insuffisant pour au moins un produit facturé.',
                     ]);
                 }
 
-                $nextDetailId = (int) ((DB::table('invoice_details')->max('id') ?? 0) + 1);
-                $detailTotal = (float) $line['quantity'] * (float) $line['price'];
-                $points = (float) ($line['point'] ?? $inventory->point ?? 0) * (float) $line['quantity'];
+                $linePrice = round((float) $line['price'], 2);
 
-                DB::table('invoice_details')->insert([
-                    'id' => $nextDetailId,
+                if ($nature === 'maj') {
+                    if (empty($payload['customer_id'])) {
+                        throw ValidationException::withMessages([
+                            'customer_id' => 'La vente MAJ exige un membre existant.',
+                        ]);
+                    }
+
+                    $memberExists =User::where('member_code', $payload['customer_id'])
+                        ->orWhere('member_id', $payload['customer_id'])
+                        ->exists();
+
+                    if (! $memberExists) {
+                        throw ValidationException::withMessages([
+                            'customer_id' => 'Le membre sélectionné est introuvable.',
+                        ]);
+                    }
+
+                    $point = (float) ($line['point'] ?? $inventory->point ?? 0);
+
+                    if ($point <= 0) {
+                        throw ValidationException::withMessages([
+                            'details' => 'La vente MAJ exige des points supérieurs à zéro.',
+                        ]);
+                    }
+                }
+
+                if ($nature === 'solds') {
+                    if ($linePrice !== round((float) $inventory->price_sold, 2)) {
+                        throw ValidationException::withMessages([
+                            'details' => 'Pour les soldes, le prix doit être le prix soldé.',
+                        ]);
+                    }
+                }
+
+                if ($nature === 'products') {
+                    $allowedPrices = [
+                        round((float) $inventory->price_detail, 2),
+                        round((float) $inventory->price_gros, 2),
+                    ];
+
+                    if (! in_array($linePrice, $allowedPrices, true)) {
+                        throw ValidationException::withMessages([
+                            'details' => 'Pour les produits, le prix doit être le prix détail ou gros.',
+                        ]);
+                    }
+                }
+
+                $detailTotal = (float) $line['quantity'] * (float) $line['price'];
+                $points = $nature === 'maj'
+                    ? (float) ($line['point'] ?? $inventory->point ?? 0) * (float) $line['quantity']
+                    : 0;
+
+               InvoiceDetail::create([
                     'product_id' => (int) $line['product_id'],
-                    'invoice_id' => $invoiceId,
+                    'invoice_id' => $newInvoice->id,
                     'deposit_id' => (int) $line['deposit_id'],
                     'quantity' => (float) $line['quantity'],
                     'price' => (float) $line['price'],
@@ -135,16 +194,13 @@ class InvoiceService
                     'points' => $points,
                 ]);
 
-                DB::table('depositproducts')
-                    ->where('id', $inventory->id)
+                DepositProduct::where('id', $inventory->id)
                     ->update([
-                        'quantity' => DB::raw('quantity - '.(float) $line['quantity']),
+                        $stockField => DB::raw($stockField . ' - ' . (float) $line['quantity']),
                         'updated_at' => now(),
                     ]);
 
-                $movementId = (int) ((DB::table('stockmouvements')->max('id') ?? 0) + 1);
-                DB::table('stockmouvements')->insert([
-                    'id' => $movementId,
+                StockMouvement::create([
                     'deposit_id' => (int) $line['deposit_id'],
                     'product_id' => (int) $line['product_id'],
                     'quantity' => (float) $line['quantity'],
@@ -157,14 +213,13 @@ class InvoiceService
                     'type' => 'withdraw',
                     'created_at' => now(),
                     'updated_at' => now(),
-                    'motif' => 'sold',
-                    'stock_before' => (float) $inventory->quantity,
-                    'sold' => (float) $inventory->quantity - (float) $line['quantity'],
+                    'motif' => $nature === 'solds' ? 'sold' : $nature,
+                    'stock_before' => $availableQuantity,
+                    'sold' => $availableQuantity - (float) $line['quantity'],
                 ]);
             }
 
-            return $invoiceId;
+            return $newInvoice->id;
         });
     }
 }
-

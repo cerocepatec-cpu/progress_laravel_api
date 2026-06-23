@@ -10,9 +10,9 @@ class InvoiceDetail extends Model
 
     protected $primaryKey = 'id';
 
-    public $incrementing = false;
+    public $incrementing = true;
 
-    public $timestamps = false;
+    public $timestamps = true;
 
     protected $guarded = [];
 

@@ -11,13 +11,15 @@ return [
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => [],
+    'allowed_origins' => [
+        'http://127.0.0.1:4200'
+    ],
 
     'allowed_origins_patterns' => [
-        '#^https?://localhost(:\d+)?$#',
-        '#^https?://127\.0\.0\.1(:\d+)?$#',
-        '#^https?://192\.168\.\d+\.\d+(:\d+)?$#',
-        '#^https?://10\.\d+\.\d+\.\d+(:\d+)?$#',
+        '#^http?://localhost(:\d+)?$#',
+        '#^http?://127\.0\.0\.1(:\d+)?$#',
+        '#^http?://192\.168\.\d+\.\d+(:\d+)?$#',
+        '#^http?://10\.\d+\.\d+\.\d+(:\d+)?$#',
     ],
 
     'allowed_headers' => ['*'],

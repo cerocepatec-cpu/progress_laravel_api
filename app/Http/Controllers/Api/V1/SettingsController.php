@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class SettingsController extends ApiController
 {
@@ -131,6 +132,71 @@ class SettingsController extends ApiController
         return $this->ok(['id' => $id], 'Periode MAJ creee.', 201);
     }
 
+    public function steps()
+    {
+        $levels = [
+            ['table' => 'builder', 'name' => 'Builder', 'level' => 1],
+            ['table' => 'sapphire', 'name' => 'Sapphire', 'level' => 2],
+            ['table' => 'ruby', 'name' => 'Ruby', 'level' => 3],
+            ['table' => 'emerald', 'name' => 'Emerald', 'level' => 4],
+            ['table' => 'diamond', 'name' => 'Diamond', 'level' => 5],
+            ['table' => 'diamond_crowned', 'name' => 'Diamond Crowned', 'level' => 6],
+            ['table' => 'ambassador', 'name' => 'Ambassador', 'level' => 7],
+            ['table' => 'ambassador_crowned', 'name' => 'Ambassador Crowned', 'level' => 8],
+        ];
+
+        return $this->ok(collect($levels)->map(function (array $level): array {
+            if (! Schema::hasTable($level['table'])) {
+                return [
+                    'id' => $level['table'],
+                    'step_name' => $level['name'],
+                    'table_name' => $level['table'],
+                    'step_level' => $level['level'],
+                    'members_count' => 0,
+                    'paid_count' => 0,
+                    'unpaid_count' => 0,
+                    'status' => 'missing',
+                ];
+            }
+
+            return [
+                'id' => $level['table'],
+                'step_name' => $level['name'],
+                'table_name' => $level['table'],
+                'step_level' => $level['level'],
+                'members_count' => DB::table($level['table'])->count(),
+                'paid_count' => DB::table($level['table'])->where('status', 'paid')->count(),
+                'unpaid_count' => DB::table($level['table'])->where('status', 'unpaid')->count(),
+                'status' => 'available',
+            ];
+        })->values());
+    }
+
+    public function storeStep(Request $request)
+    {
+        return $this->fail(
+            'Les etapes sont derivees des tables builder, sapphire, ruby, emerald, diamond, diamond_crowned, ambassador et ambassador_crowned.',
+            422
+        );
+    }
+
+    public function observations()
+    {
+        return $this->ok(
+            DB::table('contact_us')
+                ->select(
+                    'id',
+                    'contact_names',
+                    'contact_email',
+                    'contact_phone',
+                    'contact_message',
+                    'contact_date'
+                )
+                ->orderByDesc('id')
+                ->get()
+        );
+    }
+
     private function upsertSingleRowConfig(string $table, array $attributes, array $insertDefaults): void
     {
         $current = DB::table($table)->first();
@@ -151,3 +217,4 @@ class SettingsController extends ApiController
         DB::table($table)->insert(array_merge($insertDefaults, $payload));
     }
 }
+

@@ -10,7 +10,7 @@ class DepositProduct extends Model
 
     protected $primaryKey = 'id';
 
-    public $incrementing = false;
+    public $incrementing = true;
 
     protected $guarded = [];
 

@@ -13,8 +13,6 @@ class User extends Authenticatable
     use HasFactory;
     use Notifiable;
 
-    // protected $table = 'members';
-
     protected $primaryKey = 'member_code';
 
     public $timestamps = false;

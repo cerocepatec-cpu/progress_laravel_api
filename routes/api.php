@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 use App\Http\Controllers\Api\V1\AccountingController;
 use App\Http\Controllers\Api\V1\AuthController;
@@ -35,6 +35,7 @@ $registerMemberApplicationRoutes = function (): void {
     Route::get('network/downline-count/{identifier?}', [NetworkController::class, 'downlineCount']);
     Route::get('network/downline-paginated/{identifier?}', [NetworkController::class, 'downlinePaginated']);
     Route::get('network/downline-by-date/{identifier?}', [NetworkController::class, 'downlineByDate']);
+    Route::get('network/qualified/{level}', [NetworkController::class, 'qualified']);
     Route::get(
         'network/vip-packet-downline-count/{identifier?}',
         [NetworkController::class, 'vipPacketDownlineCount']
@@ -61,14 +62,14 @@ $registerSharedBusinessRoutes = function (): void {
 
 $registerBackofficeUserRoutes = function (): void {
 
-
     Route::get('members', [MemberController::class, 'index']);
     Route::get('members/{identifier}', [MemberController::class, 'show']);
 
-    
     Route::get('catalog/categories', [CatalogController::class, 'memberCategories']);
     Route::get('catalog/countries', [CatalogController::class, 'countries']);
     Route::get('catalog/cities', [CatalogController::class, 'cities']);
+    Route::post('/configuration/cities', [CatalogController::class, 'storeCity']);
+
     Route::get('catalog/product-categories', [CatalogController::class, 'productCategories']);
     Route::get('catalog/uoms', [CatalogController::class, 'uoms']);
     Route::get('catalog/products', [CatalogController::class, 'products']);
@@ -85,6 +86,7 @@ $registerBackofficeUserRoutes = function (): void {
 };
 
 $registerBackofficeAdminRoutes = function (): void {
+    Route::post('users/normal', [MemberController::class, 'storeNormal']);
     Route::patch('members/{identifier}', [MemberController::class, 'update']);
     Route::patch('members/{identifier}/status', [MemberController::class, 'updateStatus']);
     Route::patch('members/{identifier}/city', [MemberController::class, 'updateCity']);
@@ -99,6 +101,17 @@ $registerBackofficeAdminRoutes = function (): void {
     Route::post('accounting/cash-operations/{cashId}/validate', [AccountingController::class, 'validateCashOperation']);
     Route::delete('accounting/cash-operations/{cashId}', [AccountingController::class, 'deleteCashOperation']);
 
+    Route::get('settings/maj-points', [SettingsController::class, 'majPoints']);
+    Route::put('settings/maj-points', [SettingsController::class, 'updateMajPoints']);
+    Route::get('settings/inscription-cost', [SettingsController::class, 'inscriptionCost']);
+    Route::put('settings/inscription-cost', [SettingsController::class, 'updateInscriptionCost']);
+    Route::get('settings/validation-expiration', [SettingsController::class, 'validationExpiration']);
+    Route::put('settings/validation-expiration', [SettingsController::class, 'updateValidationExpiration']);
+    Route::get('settings/periodic-maj', [SettingsController::class, 'periodicMaj']);
+    Route::post('settings/periodic-maj', [SettingsController::class, 'storePeriodicMaj']);
+    Route::get('settings/steps', [SettingsController::class, 'steps']);
+    Route::post('settings/steps', [SettingsController::class, 'storeStep']);
+    Route::get('observations', [SettingsController::class, 'observations']);
     Route::post('catalog/categories', [CatalogController::class, 'storeMemberCategory']);
     Route::patch('catalog/categories/{category}', [CatalogController::class, 'updateMemberCategory']);
     Route::delete('catalog/categories/{category}', [CatalogController::class, 'deleteMemberCategory']);
@@ -124,9 +137,7 @@ $registerBackofficeAdminRoutes = function (): void {
     Route::post('inventory/transfers/{transferId}/deny', [InventoryController::class, 'denyTransfer']);
 
     Route::post('invoices', [InvoiceController::class, 'store']);
-};
-
-$registerBackofficeAdminItRoutes = function (): void {
+    // route pour le It a effacer apres les test 
     Route::get('settings/maj-points', [SettingsController::class, 'majPoints']);
     Route::put('settings/maj-points', [SettingsController::class, 'updateMajPoints']);
     Route::get('settings/adhesion-points', [SettingsController::class, 'adhesionPoints']);
@@ -135,8 +146,31 @@ $registerBackofficeAdminItRoutes = function (): void {
     Route::put('settings/inscription-cost', [SettingsController::class, 'updateInscriptionCost']);
     Route::get('settings/validation-expiration', [SettingsController::class, 'validationExpiration']);
     Route::put('settings/validation-expiration', [SettingsController::class, 'updateValidationExpiration']);
+
     Route::get('settings/periodic-maj', [SettingsController::class, 'periodicMaj']);
     Route::post('settings/periodic-maj', [SettingsController::class, 'storePeriodicMaj']);
+
+    Route::get('settings/steps', [SettingsController::class, 'steps']);
+    Route::post('settings/steps', [SettingsController::class, 'storeStep']);
+    Route::get('observations', [SettingsController::class, 'observations']);
+};
+
+$registerBackofficeAdminItRoutes = function (): void {
+    // Route::get('settings/maj-points', [SettingsController::class, 'majPoints']);
+    // Route::put('settings/maj-points', [SettingsController::class, 'updateMajPoints']);
+    // Route::get('settings/adhesion-points', [SettingsController::class, 'adhesionPoints']);
+    // Route::put('settings/adhesion-points', [SettingsController::class, 'updateAdhesionPoints']);
+    // Route::get('settings/inscription-cost', [SettingsController::class, 'inscriptionCost']);
+    // Route::put('settings/inscription-cost', [SettingsController::class, 'updateInscriptionCost']);
+    // Route::get('settings/validation-expiration', [SettingsController::class, 'validationExpiration']);
+    // Route::put('settings/validation-expiration', [SettingsController::class, 'updateValidationExpiration']);
+
+    // Route::get('settings/periodic-maj', [SettingsController::class, 'periodicMaj']);
+    // Route::post('settings/periodic-maj', [SettingsController::class, 'storePeriodicMaj']);
+
+    // Route::get('settings/steps', [SettingsController::class, 'steps']);
+    // Route::post('settings/steps', [SettingsController::class, 'storeStep']);
+    // Route::get('observations', [SettingsController::class, 'observations']);
 };
 
 // Legacy / compatibility auth endpoints.
@@ -161,7 +195,7 @@ Route::prefix('v1')->group(function () use (
     Route::middleware(['auth:sanctum', 'member.scope:member,backoffice'])->group($registerSharedBusinessRoutes);
 
     // Member application.
-    Route::middleware(['auth:sanctum', 'member.scope:member'])->group($registerMemberApplicationRoutes);
+    Route::middleware(['auth:sanctum', 'member.scope:member,backoffice'])->group($registerMemberApplicationRoutes);
 
     // Backoffice application - normal user (comptable + admin + admin IT).
     Route::middleware(['auth:sanctum', 'member.scope:backoffice'])->group($registerBackofficeUserRoutes);
