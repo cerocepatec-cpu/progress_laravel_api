@@ -29,9 +29,24 @@ class InvoiceService
     public function details(int $invoiceId): array
     {
         $invoice = DB::table('invoices as i')
-            ->leftJoin('users as m', 'm.member_id', '=', 'i.customer_id')
+            ->leftJoin('users as c', 'c.member_id', '=', 'i.customer_id')
+            ->leftJoin('users as s', 's.member_id', '=', 'i.edited_by_id')
             ->where('i.id', $invoiceId)
-            ->select('i.*', 'm.name', 'm.lastname', 'm.pseudo', 'm.member_id')
+            ->select(
+                'i.*',
+
+                'c.name as customer_name_from_user',
+                'c.lastname as customer_lastname',
+                'c.pseudo as customer_pseudo',
+                'c.member_id as customer_member_id',
+                'c.member_code as customer_member_code',
+
+                's.name as seller_name',
+                's.lastname as seller_lastname',
+                's.pseudo as seller_pseudo',
+                's.member_id as seller_member_id',
+                's.member_code as seller_member_code'
+            )
             ->first();
 
         if (! $invoice) {
@@ -55,14 +70,52 @@ class InvoiceService
             )
             ->get();
 
+        $walkinName = trim((string) ($invoice->customer_name ?? ''));
+
+        $customerDisplayName = trim(
+            (string) (($invoice->customer_name_from_user ?? '') . ' ' . ($invoice->customer_lastname ?? ''))
+        );
+
+        $sellerDisplayName = trim(
+            (string) (($invoice->seller_name ?? '') . ' ' . ($invoice->seller_lastname ?? ''))
+        );
+
         return [
             ...(array) $invoice,
-            'customer' => $invoice->member_id ? [
-                'member_id' => $invoice->member_id,
-                'name' => $invoice->name,
-                'lastname' => $invoice->lastname,
-                'pseudo' => $invoice->pseudo,
-            ] : null,
+
+            'customer' => $invoice->customer_member_id
+                ? [
+                    'type' => 'member',
+                    'member_id' => $invoice->customer_member_id,
+                    'member_code' => $invoice->customer_member_code,
+                    'name' => $invoice->customer_name_from_user,
+                    'lastname' => $invoice->customer_lastname,
+                    'pseudo' => $invoice->customer_pseudo,
+                    'display_name' => $customerDisplayName !== ''
+                        ? $customerDisplayName
+                        : ($invoice->customer_pseudo ?: 'Client membre'),
+                ]
+                : [
+                    'type' => 'walkin',
+                    'member_id' => null,
+                    'member_code' => null,
+                    'name' => $walkinName !== '' ? $walkinName : 'Client comptoir',
+                    'lastname' => null,
+                    'pseudo' => null,
+                    'display_name' => $walkinName !== '' ? $walkinName : 'Client comptoir',
+                ],
+
+            'seller' => [
+                'member_id' => $invoice->seller_member_id,
+                'member_code' => $invoice->seller_member_code,
+                'name' => $invoice->seller_name,
+                'lastname' => $invoice->seller_lastname,
+                'pseudo' => $invoice->seller_pseudo,
+                'display_name' => $sellerDisplayName !== ''
+                    ? $sellerDisplayName
+                    : ($invoice->seller_pseudo ?: $invoice->edited_by_id),
+            ],
+
             'details' => $details,
         ];
     }
@@ -86,7 +139,7 @@ class InvoiceService
 
             $type = $payload['type_facture'];
             $totalReceived = $type === 'cash' ? $total : (float) ($payload['total_received'] ?? 0);
-
+            logger()->info('FACTURE PAYLOAD', $payload);
             $newInvoice = Invoice::create([
                 'edited_by_id' => $actor->member_id,
                 'customer_id' => $payload['customer_id'] ?? null,

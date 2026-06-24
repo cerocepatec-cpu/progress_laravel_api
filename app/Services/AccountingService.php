@@ -138,7 +138,7 @@ class AccountingService
                 'adhesion' => null,
             ]);
 
-            DB::table('members')
+            DB::table('users')
                 ->where('member_code', 1)
                 ->update([
                     'total_amount_e_wallet' => DB::raw('total_amount_e_wallet + ' . (float) $amount),
@@ -148,6 +148,7 @@ class AccountingService
                 $actor->member_id,
                 'Entree caisse : vous avez effectue une entree en caisse de ' . $amount . '$.'
             );
+
             $this->notifications->push(
                 $owner->member_id,
                 'Entree caisse : votre compte principal a ete augmente de ' . $amount . '$ par ' . $actor->username . '.'
@@ -336,34 +337,79 @@ class AccountingService
         $type = $filters['type'] ?? 'entries';
         $from = $filters['from'] ?? now()->toDateString();
         $to = $filters['to'] ?? now()->toDateString();
+
         $accounts = collect($filters['accounts'] ?? [])->filter()->values();
+
+        $agentId = $filters['agent_id'] ?? null;
+        $cityId = $filters['city_id'] ?? null;
+
         $canManageAll = $this->canManageAll($actor);
 
         return match ($type) {
             'entries' => [
                 'type' => $type,
-                'items' => $this->queryEntries($actor, $from, $to, $accounts, $canManageAll)->get(),
+                'items' => $this
+                    ->queryEntries($actor, $from, $to, $accounts, $canManageAll, $agentId, $cityId)
+                    ->get(),
             ],
+
             'wayouts' => [
                 'type' => $type,
-                'items' => $this->queryWayouts($actor, $from, $to, $accounts, $canManageAll)->get(),
+                'items' => $this
+                    ->queryWayouts($actor, $from, $to, $accounts, $canManageAll, $agentId, $cityId)
+                    ->get(),
             ],
+
             'transactions' => [
                 'type' => $type,
                 'items' => DB::table('transactions_accounts')
-                    ->when(! $canManageAll, fn($query) => $query->where('member_id_source', $actor->member_id))
-                    ->whereBetween(DB::raw('DATE(date_transaction)'), [$from, $to])
-                    ->orderByDesc('date_transaction')
+                    ->leftJoin('members as done_user', 'done_user.member_id', '=', 'transactions_accounts.done_by')
+                    ->select('transactions_accounts.*')
+                    ->when(
+                        ! $canManageAll,
+                        fn($query) =>
+                        $query->where('transactions_accounts.member_id_source', $actor->member_id)
+                    )
+                    ->when(
+                        $agentId,
+                        fn($query) =>
+                        $query->where('transactions_accounts.done_by', $agentId)
+                    )
+                    ->when(
+                        $cityId,
+                        fn($query) =>
+                        $query->where('done_user.city', $cityId)
+                    )
+                    ->whereBetween(DB::raw('DATE(transactions_accounts.date_transaction)'), [$from, $to])
+                    ->orderByDesc('transactions_accounts.date_transaction')
                     ->get(),
             ],
+
             'cash' => [
                 'type' => $type,
                 'items' => DB::table('cash_operations')
-                    ->when(! $canManageAll, fn($query) => $query->where('member_code', $actor->member_code))
-                    ->whereBetween('cash_date', [$from, $to])
-                    ->orderByDesc('cash_date')
+                    ->leftJoin('members', 'members.member_code', '=', 'cash_operations.member_code')
+                    ->select('cash_operations.*')
+                    ->when(
+                        ! $canManageAll,
+                        fn($query) =>
+                        $query->where('cash_operations.member_code', $actor->member_code)
+                    )
+                    ->when(
+                        $agentId,
+                        fn($query) =>
+                        $query->where('cash_operations.member_code', $agentId)
+                    )
+                    ->when(
+                        $cityId,
+                        fn($query) =>
+                        $query->where('members.city', $cityId)
+                    )
+                    ->whereBetween(DB::raw('DATE(cash_operations.cash_date)'), [$from, $to])
+                    ->orderByDesc('cash_operations.cash_date')
                     ->get(),
             ],
+
             default => throw ValidationException::withMessages([
                 'type' => 'Type de rapport inconnu.',
             ]),
@@ -446,7 +492,7 @@ class AccountingService
                 ->update(['cash_statute' => 'enabled']);
 
             $this->setBalance($member->member_code, (float) $member->total_amount_e_wallet - (float) $cash->cash_mount);
-            DB::table('members')
+            DB::table('users')
                 ->where('member_code', 1)
                 ->update([
                     'total_amount_e_wallet' => DB::raw('total_amount_e_wallet + ' . (float) $cash->cash_mount),
@@ -552,24 +598,76 @@ class AccountingService
         });
     }
 
-    private function queryEntries(User $actor, string $from, string $to, Collection $accounts, bool $canManageAll)
-    {
+    private function queryEntries(
+        User $actor,
+        string $from,
+        string $to,
+        $accounts,
+        bool $canManageAll,
+        ?string $agentId = null,
+        ?int $cityId = null
+    ) {
         return DB::table('entries_accountancy')
-            ->join('members', 'entries_accountancy.member_id', '=', 'members.member_id')
-            ->when(! $canManageAll, fn($query) => $query->where('entries_accountancy.member_id', $actor->member_id))
-            ->when($canManageAll && $accounts->isNotEmpty(), fn($query) => $query->whereIn('entries_accountancy.member_id', $accounts->all()))
-            ->whereBetween(DB::raw('DATE(date_entry_accountancy)'), [$from, $to])
-            ->orderByDesc('date_entry_accountancy');
+            ->leftJoin('members', 'members.member_id', '=', 'entries_accountancy.member_id')
+            ->select('entries_accountancy.*', 'members.*')
+            ->when(
+                ! $canManageAll,
+                fn($query) =>
+                $query->where('entries_accountancy.member_id', $actor->member_id)
+            )
+            ->when(
+                $accounts->isNotEmpty(),
+                fn($query) =>
+                $query->whereIn('entries_accountancy.member_id', $accounts)
+            )
+            ->when(
+                $agentId,
+                fn($query) =>
+                $query->where('entries_accountancy.member_id', $agentId)
+            )
+            ->when(
+                $cityId,
+                fn($query) =>
+                $query->where('members.city', $cityId)
+            )
+            ->whereBetween(DB::raw('DATE(entries_accountancy.date_entry_accountancy)'), [$from, $to])
+            ->orderByDesc('entries_accountancy.date_entry_accountancy');
     }
 
-    private function queryWayouts(User $actor, string $from, string $to, Collection $accounts, bool $canManageAll)
-    {
+    private function queryWayouts(
+        User $actor,
+        string $from,
+        string $to,
+        $accounts,
+        bool $canManageAll,
+        ?string $agentId = null,
+        ?int $cityId = null
+    ) {
         return DB::table('wayout_accountancy')
-            ->join('members', 'wayout_accountancy.done_by', '=', 'members.member_id')
-            ->when(! $canManageAll, fn($query) => $query->where('wayout_accountancy.done_by', $actor->member_id))
-            ->when($canManageAll && $accounts->isNotEmpty(), fn($query) => $query->whereIn('wayout_accountancy.done_by', $accounts->all()))
-            ->whereBetween(DB::raw('DATE(date_wayout_accountancy)'), [$from, $to])
-            ->orderByDesc('date_wayout_accountancy');
+            ->leftJoin('members', 'members.member_id', '=', 'wayout_accountancy.done_by')
+            ->select('wayout_accountancy.*', 'members.*')
+            ->when(
+                ! $canManageAll,
+                fn($query) =>
+                $query->where('wayout_accountancy.done_by', $actor->member_id)
+            )
+            ->when(
+                $accounts->isNotEmpty(),
+                fn($query) =>
+                $query->whereIn('wayout_accountancy.done_by', $accounts)
+            )
+            ->when(
+                $agentId,
+                fn($query) =>
+                $query->where('wayout_accountancy.done_by', $agentId)
+            )
+            ->when(
+                $cityId,
+                fn($query) =>
+                $query->where('members.city', $cityId)
+            )
+            ->whereBetween(DB::raw('DATE(wayout_accountancy.date_wayout_accountancy)'), [$from, $to])
+            ->orderByDesc('wayout_accountancy.date_wayout_accountancy');
     }
 
     private function canManageAll(User $actor): bool
@@ -609,7 +707,7 @@ class AccountingService
 
     private function setBalance(int $memberCode, float $newBalance): void
     {
-        DB::table('members')
+        DB::table('users')
             ->where('member_code', $memberCode)
             ->update(['total_amount_e_wallet' => $newBalance]);
     }

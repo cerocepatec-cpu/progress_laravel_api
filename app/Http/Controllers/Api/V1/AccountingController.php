@@ -24,7 +24,29 @@ class AccountingController extends ApiController
 
     public function reports(Request $request)
     {
-        return $this->ok($this->accounting->reports($request->user(), $request->all()));
+        $filters = $request->validate([
+            'type' => 'nullable|string|in:entries,wayouts,transactions,cash',
+            'from' => 'nullable|date',
+            'to' => 'nullable|date',
+            'accounts' => 'nullable|array',
+            'accounts.*' => 'nullable',
+            'agent_id' => 'nullable|string',
+            'done_by' => 'nullable|string',
+            'city_id' => 'nullable|integer',
+        ]);
+
+        $filters['agent_id'] = $filters['agent_id']
+            ?? $filters['done_by']
+            ?? null;
+
+        unset($filters['done_by']);
+
+        return $this->ok(
+            $this->accounting->reports(
+                $request->user(),
+                $filters
+            )
+        );
     }
 
     public function storeEntry(Request $request)
@@ -67,7 +89,7 @@ class AccountingController extends ApiController
             ]
         );
     }
-    
+
     public function storeWayout(Request $request)
     {
         $data = $request->validate([
@@ -98,7 +120,7 @@ class AccountingController extends ApiController
     {
         $member = $this->mlm->resolveMember($identifier);
 
-        return $this->ok($this->accounting->memberLedger($request,$member));
+        return $this->ok($this->accounting->memberLedger($request, $member));
     }
 
     public function cashOperations(Request $request)

@@ -47,6 +47,7 @@ $registerSharedBusinessRoutes = function (): void {
     Route::get('accounting/members/{identifier}/ledger', [AccountingController::class, 'memberLedger']);
     Route::get('mlm/dashboard', [AccountingController::class, 'summary']);
     Route::get('mlm/members', [MemberController::class, 'index']);
+    Route::get('members/admin-agents', [MemberController::class, 'adminAgents']);
     Route::get('wallet/overview', [AccountingController::class, 'summary']);
     Route::get('wallet/commissions', [AccountingController::class, 'reports']);
     Route::get('accounting/member-monthly-stats', [AccountingController::class, 'memberMonthlyStats']);

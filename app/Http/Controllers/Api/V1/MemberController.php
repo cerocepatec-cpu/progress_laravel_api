@@ -98,6 +98,20 @@ class MemberController extends ApiController
         ]);
     }
 
+    public function adminAgents()
+    {
+        return response()->json(
+            User::query()
+                ->whereIn('categorie_id', [6,9])
+                ->select(
+                    'member_id',
+                    'name',
+                    'lastname'
+                )
+                ->orderBy('name')
+                ->get()
+        );
+    }
     private function membersIndexQuery(Request $request, array $except = [])
     {
         return User::query()
@@ -182,7 +196,7 @@ class MemberController extends ApiController
             201
         );
     }
-    
+
     public function show(string $identifier)
     {
         $member = $this->mlm->resolveMember($identifier)->load('category');

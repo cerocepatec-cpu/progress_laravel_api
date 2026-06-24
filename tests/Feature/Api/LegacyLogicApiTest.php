@@ -75,7 +75,7 @@ class LegacyLogicApiTest extends TestCase
     {
         $owner = User::query()->where('member_code', 1)->firstOrFail();
 
-        DB::table('members')->where('member_code', $owner->member_code)->update([
+        DB::table('users')->where('member_code', $owner->member_code)->update([
             'password' => Hash::make('secret-main-old'),
             'password_e_wallet' => Hash::make('secret-old'),
         ]);
@@ -136,7 +136,7 @@ class LegacyLogicApiTest extends TestCase
     {
         $owner = $this->authenticateOwner();
 
-        DB::table('members')->where('member_code', $owner->member_code)->update([
+        DB::table('users')->where('member_code', $owner->member_code)->update([
             'total_amount_e_wallet' => 500,
             'pdfpaquet' => 1,
         ]);

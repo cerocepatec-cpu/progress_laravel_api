@@ -50,7 +50,7 @@ return new class extends Migration
 
     public function up(): void
     {
-        if (Schema::hasTable('members') && Schema::hasTable('categories')) {
+        if (Schema::hastable('users') && Schema::hasTable('categories')) {
             return;
         }
 

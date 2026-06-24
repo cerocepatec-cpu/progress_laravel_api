@@ -43,10 +43,13 @@ class InvoiceController extends ApiController
     {
         $data = $request->validate([
             'customer_id' => ['nullable', 'string'],
+            'customer_name' => ['nullable', 'string', 'max:255'],
+
             'type_facture' => ['required', 'string'],
             'nature' => ['nullable', Rule::in(['products', 'solds', 'maj'])],
             'note' => ['nullable', 'string'],
             'total_received' => ['nullable', 'numeric'],
+
             'details' => ['required', 'array', 'min:1'],
             'details.*.product_id' => ['required', 'integer'],
             'details.*.deposit_id' => ['required', 'integer'],
