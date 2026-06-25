@@ -58,9 +58,9 @@ class AccountingController extends ApiController
             'point' => ['nullable', 'numeric'],
         ]);
 
-        $id = $this->accounting->storeEntry($request->user(), $data);
+        $entry = $this->accounting->storeEntry($request->user(), $data);
 
-        return $this->ok(['id' => $id], 'Entree comptable enregistree.', 201);
+        return $this->ok($entry, 'success', 201);
     }
 
     public function downloadVipPacket(Request $request)
@@ -98,9 +98,9 @@ class AccountingController extends ApiController
             'destination' => ['nullable', 'string'],
         ]);
 
-        $id = $this->accounting->storeWayout($request->user(), $data);
+        $wayout = $this->accounting->storeWayout($request->user(), $data);
 
-        return $this->ok(['id' => $id], 'Sortie comptable enregistree.', 201);
+        return $this->ok($wayout, 'success', 201);
     }
 
     public function transfer(Request $request)

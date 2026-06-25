@@ -22,11 +22,6 @@ return new class extends Migration
             $table->string('password');
             $table->rememberToken();
             $table->timestamps();
-
-            $table->foreign('member_code')
-                ->references('member_code')
-                ->on('members')
-                ->nullOnDelete();
         });
     }
 

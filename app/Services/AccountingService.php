@@ -2,7 +2,9 @@
 
 namespace App\Services;
 
+use App\Models\EntryAccountancy;
 use App\Models\User;
+use App\Models\WayoutAccountancy;
 use App\Services\NotificationService;
 use App\Support\LegacyPassword;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -114,7 +116,7 @@ class AccountingService
         });
     }
 
-    public function storeEntry(User $actor, array $payload): int
+    public function storeEntry(User $actor, array $payload): EntryAccountancy
     {
         $amount = (float) $payload['amount'];
 
@@ -124,10 +126,10 @@ class AccountingService
             ]);
         }
 
-        return DB::transaction(function () use ($actor, $payload, $amount): int {
+        return DB::transaction(function () use ($actor, $payload, $amount): EntryAccountancy {
             $owner = $this->lockMember(1);
 
-            $id = DB::table('entries_accountancy')->insertGetId([
+            $entry =EntryAccountancy::create([
                 'amount' => $amount,
                 'member_id' => $actor->member_id,
                 'wording' => $payload['wording'],
@@ -154,11 +156,11 @@ class AccountingService
                 'Entree caisse : votre compte principal a ete augmente de ' . $amount . '$ par ' . $actor->username . '.'
             );
 
-            return (int) $id;
+            return $entry;
         });
     }
 
-    public function storeWayout(User $actor, array $payload): int
+    public function storeWayout(User $actor, array $payload): WayoutAccountancy
     {
         $amount = (float) $payload['amount'];
 
@@ -168,7 +170,7 @@ class AccountingService
             ]);
         }
 
-        return DB::transaction(function () use ($actor, $payload, $amount): int {
+        return DB::transaction(function () use ($actor, $payload, $amount): WayoutAccountancy {
             $owner = $this->lockMember(1);
 
             if ((float) $owner->total_amount_e_wallet < $amount) {
@@ -177,7 +179,7 @@ class AccountingService
                 ]);
             }
 
-            $id = DB::table('wayout_accountancy')->insertGetId([
+            $wayout =WayoutAccountancy::create([
                 'amount' => $amount,
                 'provenance_wayout' => $payload['destination'] ?? 'external',
                 'wording' => $payload['wording'],
@@ -196,7 +198,7 @@ class AccountingService
                 'Sortie caisse : votre compte principal a ete diminue de ' . $amount . '$ par ' . $actor->username . '.'
             );
 
-            return (int) $id;
+            return  $wayout;
         });
     }
 
