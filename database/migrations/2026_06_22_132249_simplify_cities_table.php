@@ -35,21 +35,24 @@ return new class extends Migration
         }
 
         $primaryKey = DB::select("
-    SELECT COUNT(*) as total
-    FROM information_schema.TABLE_CONSTRAINTS
-    WHERE TABLE_SCHEMA = DATABASE()
-    AND TABLE_NAME = 'cities'
-    AND CONSTRAINT_TYPE = 'PRIMARY KEY'
-");
+            SELECT COUNT(*) as total
+            FROM information_schema.TABLE_CONSTRAINTS
+            WHERE TABLE_SCHEMA = DATABASE()
+            AND TABLE_NAME = 'cities'
+            AND CONSTRAINT_TYPE = 'PRIMARY KEY'
+        ");
 
         if (($primaryKey[0]->total ?? 0) == 0) {
+            // ÉTAPE DE SÉCURITÉ : Nettoyer les IDs en doublon (ex: l'ID 125) avant de poser la clé primaire
+            $this->repairCityDuplicateIds();
+
             DB::statement('ALTER TABLE cities ADD PRIMARY KEY (id)');
         }
 
         DB::statement("
-    ALTER TABLE cities
-    MODIFY id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT
-");
+            ALTER TABLE cities
+            MODIFY id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT
+        ");
 
         $primaryKey = DB::select("
             SELECT COUNT(*) as total
@@ -89,5 +92,15 @@ return new class extends Migration
                 $table->text('wikiDataId')->nullable();
             }
         });
+    }
+
+    /**
+     * Assigne un identifiant incrémental séquentiel unique à chaque ville existante
+     * pour éliminer les doublons d'id (comme le 125) avant d'injecter la clé primaire.
+     */
+    private function repairCityDuplicateIds(): void
+    {
+        DB::statement("SET @count = 0;");
+        DB::statement("UPDATE `cities` SET `id` = (@count:=@count+1);");
     }
 };

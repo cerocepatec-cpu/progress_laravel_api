@@ -68,6 +68,9 @@ return new class extends Migration
             ", [$database, $table]);
 
             if (($primaryKey->total ?? 0) === 0) {
+                // ÉTAPE DE SÉCURITÉ AUTOMATIQUE : Éliminer les doublons d'IDs (ex: l'id '1' de adhesionpointsettings)
+                $this->repairDuplicateIdsInTable($table);
+
                 DB::statement("
                     ALTER TABLE `$table`
                     ADD PRIMARY KEY (`id`)
@@ -94,5 +97,15 @@ return new class extends Migration
     public function down(): void
     {
         //
+    }
+
+    /**
+     * Assigne un identifiant incrémental séquentiel unique à chaque ligne de la table
+     * pour éliminer les conflits de doublons avant la création de la clé primaire.
+     */
+    private function repairDuplicateIdsInTable(string $table): void
+    {
+        DB::statement("SET @count = 0;");
+        DB::statement("UPDATE `{$table}` SET `id` = (@count:=@count+1);");
     }
 };

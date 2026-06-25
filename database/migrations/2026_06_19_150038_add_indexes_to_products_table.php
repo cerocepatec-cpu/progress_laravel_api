@@ -16,7 +16,7 @@ return new class extends Migration
         $this->addIndexIfMissing(
     'products',
     'idx_products_status',
-    'ALTER TABLE products ADD INDEX idx_products_status (status(32))'
+    'ALTER TABLE products ADD INDEX idx_products_status (status)'
 );
 
         $this->addIndexIfMissing(
@@ -34,13 +34,13 @@ return new class extends Migration
         $this->addIndexIfMissing(
             'products',
             'idx_products_added_by',
-            'ALTER TABLE products ADD INDEX idx_products_added_by (added_by)'
+            'ALTER TABLE products ADD INDEX idx_products_added_by (added_by(64))'
         );
 
       $this->addIndexIfMissing(
     'products',
     'idx_products_status_id',
-    'ALTER TABLE products ADD INDEX idx_products_status_id (status(32), id)'
+    'ALTER TABLE products ADD INDEX idx_products_status_id (status, id)'
 );
     }
 
