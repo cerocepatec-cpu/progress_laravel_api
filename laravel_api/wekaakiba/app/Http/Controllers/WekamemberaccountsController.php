@@ -28,7 +28,7 @@ class WekamemberaccountsController extends Controller
     }
 
     public function getaccountsumsbyuser($usersent){
-        $user = User::find($usersent);
+        $user = Auth::user();
         if (!$user || $user->status=='disabled') {
             return $this->errorResponse('Utilisateur invalide ou non trouvé.');
         }
@@ -284,7 +284,7 @@ class WekamemberaccountsController extends Controller
        $account=wekamemberaccounts::leftjoin('users as U', 'wekamemberaccounts.user_id','=','U.id')
         ->leftjoin('moneys as M', 'wekamemberaccounts.money_id','=','M.id')
         ->where('wekamemberaccounts.id',$wekamemberaccounts->id)->first(['M.abreviation as money_abreviation', 'U.user_name', 'wekamemberaccounts.*']);
-         unset($account->sold);
+        //  unset($account->sold);
         return $account;
     }
 

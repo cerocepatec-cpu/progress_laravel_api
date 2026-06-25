@@ -30,7 +30,9 @@ class wekaAccountsTransactions extends Model
     'imputed_to',	
 	'imputed_at',	
 	'imputed_by',
-    'fund_id'
+    'fund_id',
+    'from_to_id',
+    'sent_to_id'
     ];
 
     public function memberAccount()

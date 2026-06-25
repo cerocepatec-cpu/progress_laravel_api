@@ -44,3 +44,10 @@ yarn-error.log
 # OS files
 .DS_Store
 Thumbs.db
+# Local keys / secrets
+uzishaApi
+uzishaApi.pub
+*.key
+*.pem
+*.pub
+

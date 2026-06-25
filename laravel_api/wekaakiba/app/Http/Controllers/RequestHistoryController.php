@@ -466,7 +466,7 @@ class RequestHistoryController extends Controller
             'depot_id'=>$this->defaultdeposit($request['enterprise_id'])['id'],
             'quantity_before'=>0,
             'total'=>$request['quantity_provided']?($request['amount_provided']*$request['quantity_provided']):$request['amount_provided'],
-            'requesthistory_id'=>$request->id
+            'request_history_id'=>$request->id
         ]);
     }
 
@@ -581,7 +581,7 @@ class RequestHistoryController extends Controller
                             ->join('funds as F','request_histories.fund_id','F.id')
                             ->join('moneys as M','F.money_id','M.id')
                             ->leftjoin('accounts as A','request_histories.account_id','A.id')
-                            ->leftjoin('stock_history_controllers as SH','request_histories.id','SH.requesthistory_id')
+                            ->leftjoin('stock_history_controllers as SH','request_histories.id','SH.request_history_id')
                             ->leftjoin('provider_controllers as P','SH.provider_id','P.id')
                             ->leftjoin('services_controllers as S','SH.service_id','S.id')
                             ->leftjoin('unit_of_measure_controllers as UOM','S.uom_id','UOM.id')

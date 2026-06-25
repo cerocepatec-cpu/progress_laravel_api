@@ -82,9 +82,10 @@ class UsersController extends Controller
         }
     }
 
-    /** @var User $user */
+   
     public function index($enterprise_id)
     {
+         /** @var User $user */
         $user=Auth::user();
         if(!$user){
             return $this->errorResponse("Utilisateur non connecté");
@@ -2119,6 +2120,9 @@ public function store(Request $request)
      * WEKA AKIBA METHODS
      */
      public function wekamemberslist($enterprise_id){
+        /**
+         * @var User $user
+         */
         $user=Auth::user();
         if (!$user) {
             return response()->json([
@@ -2265,6 +2269,9 @@ public function store(Request $request)
      
    public function wekamemberslookup(Request $request)
     {
+        /**
+         * @var User $user
+         */
          $user=Auth::user();
         if (!$user) {
             return response()->json([
@@ -2365,7 +2372,7 @@ public function store(Request $request)
         return $list;
      }
 
-     public function newwekamember(Request $request){
+      public function newwekamember(Request $request){
         $request->validate([
             'name' => 'required|string|min:4',
             'user_phone' => 'required|string',
@@ -2425,9 +2432,21 @@ public function store(Request $request)
                 ]); 
             }else{
                 try {
+                    $plainPassword = "member" . date('His') . $this->EseNumberUsers($actualese->id);
+                    $plainPassword = $request->user_password 
+                        ? $request->user_password 
+                        : "member" . date('His') . $this->EseNumberUsers($actualese->id);
+                    $request->merge([
+                        'password' => Hash::make($plainPassword),
+                    ]);
+                    $request->request->remove('user_password');
+                    $request->request->remove('user_password2');
+
+                    $username = $request->user_name 
+                        ? $request->user_name 
+                        :  "member" . $this->EseNumberUsers($actualese->id);
                     $request['uuid']="GOM".date('Y').$this->EseNumberUsers($actualese->id);
-                    $request['user_name']="member".$this->EseNumberUsers($actualese->id);
-                    $request['user_password']="member".date('his').$this->EseNumberUsers($actualese->id);
+                    $request['user_name']=    $username;
                     $request['status']="enabled";
                     $newuser = user::create($request->all());
                     if($newuser){
@@ -2477,6 +2496,17 @@ public function store(Request $request)
                     }else{
                     $datatoreturn=$this->showweka($newuser);
                     }  
+                       try {
+        if ($request->email) {
+            Mail::raw(
+                "Bonjour {$newuser->name}\n\nIdentifiant : {$username}\nMot de passe : {$plainPassword}\n\nMerci.",
+                fn($m) => $m->to($request->email)->subject("Accès WEKA AKIBA")
+            );
+        }
+    } catch (\Throwable $th) {
+        //throw $th;
+        Log::error("Email sending failed for new WEKA member", ['error' => $th->getMessage()]);
+    }
                 return response()->json([
                     "status"=>200,
                     "message"=>"success",
@@ -2494,6 +2524,137 @@ public function store(Request $request)
             } 
         }
      }
+ 
+
+    //  public function newwekamember(Request $request){
+    //     $request->validate([
+    //         'name' => 'required|string|min:4',
+    //         'user_phone' => 'required|string',
+    //         'email' => 'nullable|string'
+    //     ]);
+
+    //     $email = $request->input('email');
+        
+    //     if (!PhoneHelper::isValidPhoneNumber($request['user_phone'],"CD")) {
+    //         return $this->errorResponse("Numéro de téléphone invalide.");
+    //     }
+
+    //     if($email && !EmailChecker::isValid($email)){
+    //       return $this->errorResponse("Adresse email invalide ou domaine inexistant.");
+    //     }
+
+    //     $customerctrl= new CustomerControllerController();
+    //     $actualuser=Auth::user();
+        
+    //     if(!$actualuser){
+    //         return response()->json([
+    //             "status"=>402,
+    //             "message"=>"error",
+    //             "error"=>"unknown user",
+    //             "data"=>null
+    //         ]);
+    //     }
+
+    //     if(!(User::find($actualuser->id))->isavailable()){
+    //          return response()->json([
+    //             "status"=>402,
+    //             "message"=>"error",
+    //             "error"=>"Votre compte est désactivé!",
+    //             "data"=>null
+    //         ]);
+    //     }
+
+    //     $actualese=$this->getEse($actualuser->id);
+    //     if(!$actualese){
+    //         return response()->json([
+    //             "status"=>402,
+    //             "message"=>"error",
+    //             "error"=>"unknown enterprise",
+    //             "data"=>null
+    //         ]);
+    //     }
+    //     //test if exists new user
+    //     $ifexists = user::join('usersenterprises as E','users.id','E.user_id')
+    //     ->where('users.name','=',$request['name'])
+    //     ->where('E.enterprise_id',$actualese->id)->first();
+    //         if($ifexists){
+    //             return response()->json([
+    //                 "status"=>500,
+    //                 "message"=>"error",
+    //                 "error"=>"duplicated member",
+    //                 "data"=>$ifexists
+    //             ]); 
+    //         }else{
+    //             try {
+    //                 $request['uuid']="GOM".date('Y').$this->EseNumberUsers($actualese->id);
+    //                 $request['user_name']="member".$this->EseNumberUsers($actualese->id);
+    //                 $request['user_password']="member".date('his').$this->EseNumberUsers($actualese->id);
+    //                 $request['status']="enabled";
+    //                 $newuser = user::create($request->all());
+    //                 if($newuser){
+    //                     usersenterprise::create([
+    //                         'user_id'=>$newuser->id,
+    //                         'enterprise_id'=>$actualese->id
+    //                     ]);
+    
+    //                     //create user as customer
+    //                     $ascustomer = CustomerController::create([
+    //                         'created_by_id'=>$actualuser->id,
+    //                         'customerName'=>$newuser->name,
+    //                         'phone'=>$newuser->user_phone,
+    //                         'mail'=>$newuser->user_mail,
+    //                         'type'=>'physique',
+    //                         'enterprise_id'=>$actualese->id,
+    //                         'uuid'=>$newuser->uuid,
+    //                         'member_id'=>$newuser->id
+    //                     ]);
+    
+    //                     $cdf=moneys::where('enterprise_id',$actualese->id)->where('abreviation','CDF')->first();
+    //                     $usd=moneys::where('enterprise_id',$actualese->id)->where('abreviation','USD')->first();
+    
+    //                     $cdfaccount=wekamemberaccounts::create([
+    //                         'sold'=>$request['soldecdf']?$request['soldecdf']:0,
+    //                         'description'=>'Compte '.$newuser->name.' CDF',
+    //                         'money_id'=>$cdf->id,
+    //                         'user_id'=>$newuser->id,
+    //                         'enterprise_id'=>$actualese->id,
+    //                         'account_number'=>"CP".date('Y').$this->EseNumberAccounts($actualese->id),
+    //                         'account_status'=>"enabled"
+    //                     ]);  
+                        
+    //                     $usdaccount=wekamemberaccounts::create([
+    //                         'sold'=>$request['soldeusd']?$request['soldeusd']:0,
+    //                         'description'=>'Compte '.$newuser->name.' USD',
+    //                         'money_id'=>$usd->id,
+    //                         'user_id'=>$newuser->id,
+    //                         'enterprise_id'=>$actualese->id,
+    //                         'account_number'=>"CP".date('Y').$this->EseNumberAccounts($actualese->id),
+    //                         'account_status'=>"enabled"
+    //                     ]);
+    //                 }
+
+    //                 if($request['returned'] && $request['returned']==='customer'){
+    //                 $datatoreturn=$customerctrl->show($ascustomer);
+    //                 }else{
+    //                 $datatoreturn=$this->showweka($newuser);
+    //                 }  
+    //             return response()->json([
+    //                 "status"=>200,
+    //                 "message"=>"success",
+    //                 "error"=>null,
+    //                 "data"=>$datatoreturn
+    //             ]);
+
+    //         } catch (Exception $e) {
+    //             return response()->json([
+    //                 "status"=>500,
+    //                 "message"=>"error",
+    //                 "error"=>$e->getMessage(),
+    //                 "data"=>null
+    //             ]); 
+    //         } 
+    //     }
+    //  }
 
      public function wekaimportmembers(Request $request){
         $actualuser=$this->getinfosuser($request->data['sentby']);

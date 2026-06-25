@@ -38,6 +38,10 @@ class User extends Authenticatable implements CanResetPassword
         'can_withdraw_on_mobile',
         'can_withdraw_by_agent',
         'adress',
+        'two_factor_enabled',
+        'two_factor_channel',
+        'phone_verified_at',
+        'timezone'
     ];
 
     /**
@@ -46,9 +50,10 @@ class User extends Authenticatable implements CanResetPassword
     protected $hidden = [
         'password',
         'remember_token',
+        'phone_verified_at',
         'email_verified_at',
         'laravel_through_key',
-        'pin',
+        'pin'
     ];
 
     /**
@@ -56,6 +61,7 @@ class User extends Authenticatable implements CanResetPassword
      */
     protected $casts = [
         'email_verified_at' => 'datetime',
+        'two_factor_enabled'=>'boolean',
     ];
 
     /**
@@ -88,17 +94,33 @@ class User extends Authenticatable implements CanResetPassword
         return $this->morphMany(PersonalAccessToken::class, 'tokenable');
     }
 
+    public function enterprises()
+    {
+        return $this->belongsToMany(
+            Enterprises::class,
+            'usersenterprises',
+            'user_id',
+            'enterprise_id'
+        );
+    }
+
     public function usersenterprise()
     {
         return $this->hasMany(UsersEnterprise::class, 'user_id', 'id');
     }
 
-    public function mobileMoneyProviders()
+   public function mobileMoneyProviders()
     {
-        return $this->belongsToMany(MobileMoneyProviders::class, 'users_mobile_money_providers')
-            ->withPivot('phone_number', 'status')
-            ->withTimestamps();
+        return $this->belongsToMany(
+            MobileMoneyProviders::class,
+            'users_mobile_money_providers',
+            'user_id',
+            'mobile_money_provider_id'
+        )
+        ->withPivot('phone_number', 'status')
+        ->withTimestamps();
     }
+
 
     public function getMobileMoneyProviderConfigDetails(string $telecom)
     {
@@ -149,5 +171,55 @@ class User extends Authenticatable implements CanResetPassword
         }else{
             return true;
         }
-    }  
+    } 
+    
+   public static function allCollectorsFromEnterprise(int $enterpriseId): array
+    {
+        return self::query()
+            ->whereIn(
+                'id',
+                usersenterprise::where('enterprise_id', $enterpriseId)
+                    ->pluck('user_id')
+            )
+            ->where('collector',true)
+            ->where('status', 'enabled')
+            ->pluck('id')
+            ->toArray();
+    }
+
+    public function sessions()
+    {
+        return $this->hasMany(UserSession::class);
+    }
+
+    public function currentSession(): ?UserSession
+    {
+        return $this->sessions()
+            ->where('status', 'active')
+            ->whereNotNull('last_seen_at')
+            ->orderByDesc('last_seen_at')
+            ->first();
+    }
+
+    public function currentSessionByDevice(string $deviceType): ?UserSession
+    {
+        return $this->sessions()
+            ->where('device_type', $deviceType)
+            ->where('status', 'active')
+            ->whereNotNull('last_seen_at')
+            ->orderByDesc('last_seen_at')
+            ->first();
+    }
+
+    public function preferences()
+    {
+        return $this->hasOne(\App\Models\UserPreference::class);
+    }
+
+    public function conversations()
+    {
+        return $this->hasMany(ConversationParticipant::class);
+    }
+
+
 }

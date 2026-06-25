@@ -1,0 +1,51 @@
+name: Deploy Laravel API to VPS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          script: |
+            set -e
+
+            cd /var/www/laravel_api/wekaakiba
+            export COMPOSER_ALLOW_SUPERUSER=1
+            mkdir -p storage/framework/{cache,sessions,views}
+            mkdir -p bootstrap/cache
+            chmod -R 775 storage bootstrap
+            echo "🔄 Pull latest code"
+            git fetch origin
+            git reset --hard origin/main
+
+            # echo "📦 Install PHP dependencies"
+            # composer install --no-interaction --prefer-dist --optimize-autoloader
+
+            echo "🧹 Clear & optimize cache"
+            # php artisan key:generate --force || true
+            # php artisan migrate --force || true
+            php artisan optimize
+            php artisan config:clear
+            php artisan route:clear
+            php artisan view:clear
+
+            echo "🔁 Restart services"
+            php artisan queue:restart || true
+
+            echo "✅ Deployment finished"
+
+
+
+
+

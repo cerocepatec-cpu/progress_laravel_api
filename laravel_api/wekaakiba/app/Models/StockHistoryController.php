@@ -39,6 +39,6 @@ class StockHistoryController extends Model
         'palette',
         'profit',
         'method_used',
-        'requesthistory_id'
+        'request_history_id'
     ];
 }

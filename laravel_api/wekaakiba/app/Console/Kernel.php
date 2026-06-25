@@ -2,6 +2,7 @@
 
 namespace App\Console;
 
+use App\Jobs\ExpireWithdrawRequests;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Console\Kernel as ConsoleKernel;
 
@@ -18,6 +19,13 @@ class Kernel extends ConsoleKernel
         // $schedule->command('inspire')->hourly();
          $schedule->command('refresh-tokens:cleanup')->daily();
          $schedule->call(function () {\App\Models\TempZip::where('expires_at', '<', now())->delete();})->daily();
+         $schedule->job(new ExpireWithdrawRequests)
+        ->everyMinute()
+        ->withoutOverlapping()
+        ->onOneServer();
+        $schedule->command('sessions:cleanup')->everyMinute()->withoutOverlapping();
+        $schedule->command('reports:dispatch')->everyMinute();
+        $schedule->command('reports:cleanup')->hourly();
     }
 
     /**

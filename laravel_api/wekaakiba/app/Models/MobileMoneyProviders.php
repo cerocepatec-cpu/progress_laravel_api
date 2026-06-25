@@ -21,11 +21,16 @@ class MobileMoneyProviders extends Model
         'metadata' => 'array',
     ];
 
-    public function users()
+   public function users()
     {
-        return $this->belongsToMany(User::class, 'users_mobile_money_providers')
-            ->withPivot('phone_number', 'status')
-            ->withTimestamps();
+        return $this->belongsToMany(
+            User::class,
+            'users_mobile_money_providers',
+            'mobile_money_provider_id',
+            'user_id'                  
+        )
+        ->withPivot('phone_number', 'status')
+        ->withTimestamps();
     }
 
     public function getSelectedFields(array $fields = [])

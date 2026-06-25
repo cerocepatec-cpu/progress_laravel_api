@@ -112,7 +112,7 @@ class Controller extends BaseController
         ]);
     } 
     
-    public function successResponse($message='success', $data,$code = 200)
+    public function successResponse($message='success', $data=null,$code = 200)
     {
         return response()->json([
             "status" => $code,
@@ -299,11 +299,17 @@ class Controller extends BaseController
         return (string) Str::orderedUuid();
     }
 
-    public function getUuId($criteria1,$criteria2){
-       
-        return $criteria1.date('Y').'.'.date('his').'.'.$criteria2.date('sh');
+   public function getUuId(string $c1, string $c2): string
+    {
+        return sprintf(
+            '%s%s.%s.%s',
+            $c1,
+            now()->format('Ymd'),
+            str_replace('.', '', microtime(true)),
+            $c2
+        );
     }
-    
+ 
     public function getinvoiceUuid($EseId){
         $lastinvoice= DB::table('invoices')->latest('created_at')->first();
        if($lastinvoice){
@@ -395,7 +401,9 @@ class Controller extends BaseController
         $fees,
         $phone,
         $adresse,
-        $status = "validated" // ← nouveau paramètre avec valeur par défaut
+        $status = "validated",
+        $from_to_id = null,
+        $sent_to_id = null
     ) {
         return wekaAccountsTransactions::create([
             'amount'             => $amount,
@@ -415,6 +423,8 @@ class Controller extends BaseController
             'transaction_status' => $status,
             'phone'              => $phone,
             'adresse'            => $adresse,
+            'from_to_id'     => $from_to_id,   
+            'sent_to_id'    => $sent_to_id
         ]);
     }
 

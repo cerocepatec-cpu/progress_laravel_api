@@ -6,6 +6,7 @@ use App\Models\moneys;
 use App\Models\requests;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
 use App\Http\Requests\StoremoneysRequest;
 use App\Http\Requests\UpdatemoneysRequest;
 use Symfony\Component\Translation\Util\ArrayConverter;
@@ -21,6 +22,33 @@ class MoneysController extends Controller
     {
         $list=moneys::where('enterprise_id','=',$enterprise_id)->get();
         return $list;
+    }
+    
+    /**
+     * Display a listing of the resource.
+     *
+     * @return \Illuminate\Http\Response
+     */
+    public function secondlistmoney()
+    {
+        $user = Auth::user();
+        if (!$user) {
+            return $this->errorResponse("Vous n'êtes pas connecté.", 400);
+        }
+
+        $ese=$this->getEse($user->id);
+         if (!$ese) {
+            return $this->errorResponse("Vous n'êtes pas affecté.", 400);
+        }
+
+        $enterprise_id=$ese->id;
+        try {
+             $list=moneys::where('enterprise_id','=',$enterprise_id)->get();
+            return $this->successResponse("success",$list);
+        } catch (\Throwable $th) {
+            return $this->errorResponse($th,500);
+        }
+       
     }
 
     /**

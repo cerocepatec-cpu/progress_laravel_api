@@ -44,39 +44,64 @@ class TransactionFee extends Model
      * @param string $type 'withdraw' ou 'send'
      * @return float|null
      */
-    public static function calculateFee(float $amount, int $money_id, string $type = 'withdraw'): ?array
-    {
+   public static function calculateFee(
+    float $amount,
+    int $money_id,
+    string $type = 'withdraw'
+    ): array {
         $user = Auth::user();
+
+        // 🔐 Sécurité minimale
         if (!$user) {
-            return null; // pas d'utilisateur connecté
+            return [
+                'percent' => 0,
+                'fee'     => 0,
+            ];
         }
 
-        // Récupère l'entreprise de l'utilisateur
-        $enterprise_id = app(\App\Http\Controllers\Controller::class)->getEse($user->id)['id'] ?? null;
+        // 🏢 Entreprise
+        $enterprise_id = app(\App\Http\Controllers\Controller::class)
+            ->getEse($user->id)['id'] ?? null;
+
         if (!$enterprise_id) {
-            return null; // pas d'enterprise trouvée
+            return [
+                'percent' => 0,
+                'fee'     => 0,
+            ];
         }
 
-        // Filtrage des tranches par devise et entreprise
+        // 💰 Recherche tranche applicable
         $fee = self::where('money_id', $money_id)
             ->where('enterprise_id', $enterprise_id)
             ->where('min_amount', '<=', $amount)
-            ->where(function($query) use ($amount) {
+            ->where(function ($query) use ($amount) {
                 $query->where('max_amount', '>=', $amount)
-                    ->orWhereNull('max_amount'); // tranche illimitée
+                    ->orWhereNull('max_amount');
             })
+            ->orderBy('min_amount', 'desc') // 🔥 important si plusieurs tranches
             ->first();
 
+        // ❌ Aucune tranche → 0 frais
         if (!$fee) {
-            return null;
+            return [
+                'percent' => 0,
+                'fee'     => 0,
+            ];
         }
 
-        $percent = $type === 'send' ? $fee->send_percent : $fee->withdraw_percent;
-        $feeAmount = ($percent / 100) * $amount;
+        // 📊 Pourcentage selon le type
+        $percent = match ($type) {
+            'send'     => (float) $fee->send_percent,
+            'withdraw' => (float) $fee->withdraw_percent,
+            default    => 0,
+        };
+
+        $feeAmount = round(($percent / 100) * $amount, 2);
 
         return [
             'percent' => $percent,
-            'fee' => round($feeAmount, 2),
+            'fee'     => $feeAmount,
         ];
     }
+
 }

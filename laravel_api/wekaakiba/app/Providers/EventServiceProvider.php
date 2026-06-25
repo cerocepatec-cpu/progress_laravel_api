@@ -12,7 +12,9 @@ class EventServiceProvider extends ServiceProvider
      * @var array<class-string, array<int, class-string>>
      */
     protected $listen = [
-        // Tu peux laisser vide — Laravel va découvrir les Events automatiquement
+        \App\Events\SendOtpMember::class => [
+        \App\Listeners\SendOtpToMemberListener::class,
+        ],
     ];
 
     /**

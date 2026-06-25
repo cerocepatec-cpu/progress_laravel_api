@@ -14,9 +14,12 @@ use App\Helpers\PhoneHelper;
 use Illuminate\Http\Request;
 use App\Services\FeesService;
 use App\Models\TransactionFee;
+use App\Helpers\OtpQueueHelper;
+use App\Jobs\OTP\SendOtpSmsJob;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Validation\Rule;
 use App\Models\wekafirstentries;
+use App\Services\BulkSmsService;
 use App\Models\wekamemberaccounts;
 use Illuminate\Support\Facades\DB;
 use App\Exports\TransactionsExport;
@@ -29,6 +32,7 @@ use Maatwebsite\Excel\Facades\Excel;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use App\Models\wekaAccountsTransactions;
+use App\Helpers\DestinationAccountResolver;
 use Illuminate\Pagination\LengthAwarePaginator;
 use App\Http\Requests\StorerequestHistoryRequest;
 use App\Http\Requests\StorewekaAccountsTransactionsRequest;
@@ -44,366 +48,426 @@ class WekaAccountsTransactionsController extends Controller
     public function index(Request $request)
     {
         // return $request;
-        $list=[];
-        if(isset($request->from)==false && empty($request->from) && isset($request->to)==false && empty($request->to)){
-            $request['from']= date('Y-m-d');
-            $request['to']=date('Y-m-d');
+        $list = [];
+        if (isset($request->from) == false && empty($request->from) && isset($request->to) == false && empty($request->to)) {
+            $request['from'] = date('Y-m-d');
+            $request['to'] = date('Y-m-d');
         }
 
         if (isset($request->user_id)) {
-            $actualuser=$this->getinfosuser($request->user_id);
+            $actualuser = $this->getinfosuser($request->user_id);
             if ($actualuser) {
-                $ese=$this->getEse($actualuser->id);
+                $ese = $this->getEse($actualuser->id);
                 if ($ese) {
-                    if ($actualuser['user_type']=='super_admin') {
+                    if ($actualuser['user_type'] == 'super_admin') {
                         //report for super admin users
-                        if(isset($request['criteria']) && !empty($request['criteria'])){
+                        if (isset($request['criteria']) && !empty($request['criteria'])) {
                             return $this->reportTransactionsgroupebBy($request);
-                        }else{
+                        } else {
                             try {
 
-                                if (isset($request['members']) && count($request['members'])>0) {
-    
-                                    $list1=collect(wekaAccountsTransactions::whereIn('member_id',$request['members'])
-                                    ->whereBetween('done_at',[$request['from'].' 00:00:00',$request['to'].' 23:59:59'])
-                                    ->get());
-                                    $list=$list1->transform(function($item){
+                                if (isset($request['members']) && count($request['members']) > 0) {
+
+                                    $list1 = collect(wekaAccountsTransactions::whereIn('member_id', $request['members'])
+                                        ->whereBetween('done_at', [$request['from'] . ' 00:00:00', $request['to'] . ' 23:59:59'])
+                                        ->get());
+                                    $list = $list1->transform(function ($item) {
                                         return $this->show($item);
                                     });
-                        
+
                                     return response()->json([
-                                        "status"=>200,
-                                        "message"=>"success",
-                                        "error"=>null,
-                                        "data"=>$list
-                                    ]);
-                                }  
-                                
-                                if (isset($request['cashiers']) && count($request['cashiers'])>0) {
-    
-                                    $list1=collect(wekaAccountsTransactions::whereIn('user_id',$request['cashiers'])
-                                    ->whereBetween('done_at',[$request['from'].' 00:00:00',$request['to'].' 23:59:59'])
-                                    ->get());
-                                    $list=$list1->transform(function($item){
-                                        return $this->show($item);
-                                    });
-                        
-                                    return response()->json([
-                                        "status"=>200,
-                                        "message"=>"success",
-                                        "error"=>null,
-                                        "data"=>$list
-                                    ]);
-                                } 
-                                
-                                if (isset($request['moneys']) && count($request['moneys'])>0) {
-    
-                                    $list1=collect(wekaAccountsTransactions::join('wekamemberaccounts','weka_accounts_transactions.member_account_id','=','wekamemberaccounts.id')
-                                    ->whereIn('wekamemberaccounts.money_id',$request['moneys'])
-                                    ->whereBetween('done_at',[$request['from'].' 00:00:00',$request['to'].' 23:59:59'])
-                                    ->get());
-                                    $list=$list1->transform(function($item){
-                                        return $this->show($item);
-                                    });
-                        
-                                    return response()->json([
-                                        "status"=>200,
-                                        "message"=>"success",
-                                        "error"=>null,
-                                        "data"=>$list
+                                        "status" => 200,
+                                        "message" => "success",
+                                        "error" => null,
+                                        "data" => $list
                                     ]);
                                 }
-    
-                                $list1=collect(wekaAccountsTransactions::where('enterprise_id',$request['enterprise_id'])
-                                ->whereBetween('done_at',[$request['from'].' 00:00:00',$request['to'].' 23:59:59'])
-                                ->get());
-                                $list=$list1->transform(function($item){
+
+                                if (isset($request['cashiers']) && count($request['cashiers']) > 0) {
+
+                                    $list1 = collect(wekaAccountsTransactions::whereIn('user_id', $request['cashiers'])
+                                        ->whereBetween('done_at', [$request['from'] . ' 00:00:00', $request['to'] . ' 23:59:59'])
+                                        ->get());
+                                    $list = $list1->transform(function ($item) {
+                                        return $this->show($item);
+                                    });
+
+                                    return response()->json([
+                                        "status" => 200,
+                                        "message" => "success",
+                                        "error" => null,
+                                        "data" => $list
+                                    ]);
+                                }
+
+                                if (isset($request['moneys']) && count($request['moneys']) > 0) {
+
+                                    $list1 = collect(wekaAccountsTransactions::join('wekamemberaccounts', 'weka_accounts_transactions.member_account_id', '=', 'wekamemberaccounts.id')
+                                        ->whereIn('wekamemberaccounts.money_id', $request['moneys'])
+                                        ->whereBetween('done_at', [$request['from'] . ' 00:00:00', $request['to'] . ' 23:59:59'])
+                                        ->get());
+                                    $list = $list1->transform(function ($item) {
+                                        return $this->show($item);
+                                    });
+
+                                    return response()->json([
+                                        "status" => 200,
+                                        "message" => "success",
+                                        "error" => null,
+                                        "data" => $list
+                                    ]);
+                                }
+
+                                $list1 = collect(wekaAccountsTransactions::where('enterprise_id', $request['enterprise_id'])
+                                    ->whereBetween('done_at', [$request['from'] . ' 00:00:00', $request['to'] . ' 23:59:59'])
+                                    ->get());
+                                $list = $list1->transform(function ($item) {
                                     return $this->show($item);
                                 });
-                    
+
                                 return response()->json([
-                                    "status"=>200,
-                                    "message"=>"success",
-                                    "error"=>null,
-                                    "data"=>$list
+                                    "status" => 200,
+                                    "message" => "success",
+                                    "error" => null,
+                                    "data" => $list
                                 ]);
                             } catch (Exception $th) {
                                 return response()->json([
-                                    "status"=>500,
-                                    "message"=>"error",
-                                    "error"=>$th->getMessage(),
-                                    "data"=>null
+                                    "status" => 500,
+                                    "message" => "error",
+                                    "error" => $th->getMessage(),
+                                    "data" => null
                                 ]);
                             }
                         }
-                    }else{
+                    } else {
                         //report for no super admin users
                         try {
 
-                            if (isset($request['members']) && count($request['members'])>0) {
+                            if (isset($request['members']) && count($request['members']) > 0) {
 
-                                $list1=collect(wekaAccountsTransactions::whereIn('member_id',$request['members'])
-                                ->where('user_id',$actualuser->id)
-                                ->whereBetween('done_at',[$request['from'].' 00:00:00',$request['to'].' 23:59:59'])
-                                ->get());
-                                $list=$list1->transform(function($item){
+                                $list1 = collect(wekaAccountsTransactions::whereIn('member_id', $request['members'])
+                                    ->where('user_id', $actualuser->id)
+                                    ->whereBetween('done_at', [$request['from'] . ' 00:00:00', $request['to'] . ' 23:59:59'])
+                                    ->get());
+                                $list = $list1->transform(function ($item) {
                                     return $this->show($item);
                                 });
-                    
-                                return response()->json([
-                                    "status"=>200,
-                                    "message"=>"success",
-                                    "error"=>null,
-                                    "data"=>$list
-                                ]);
-                            }  
-                            
-                            if (isset($request['cashiers']) && count($request['cashiers'])>0) {
 
-                                $list1=collect(wekaAccountsTransactions::whereIn('user_id',$request['cashiers'])
-                                ->where('user_id',$actualuser->id)
-                                ->whereBetween('done_at',[$request['from'].' 00:00:00',$request['to'].' 23:59:59'])
-                                ->get());
-                                $list=$list1->transform(function($item){
-                                    return $this->show($item);
-                                });
-                    
                                 return response()->json([
-                                    "status"=>200,
-                                    "message"=>"success",
-                                    "error"=>null,
-                                    "data"=>$list
-                                ]);
-                            } 
-                            
-                            if (isset($request['moneys']) && count($request['moneys'])>0) {
-
-                                $list1=collect(wekaAccountsTransactions::join('wekamemberaccounts','weka_accounts_transactions.member_account_id','=','wekamemberaccounts.id')
-                                ->where('weka_accounts_transactions.user_id',$actualuser->id)
-                                ->whereIn('wekamemberaccounts.money_id',$request['moneys'])
-                                ->whereBetween('done_at',[$request['from'].' 00:00:00',$request['to'].' 23:59:59'])
-                                ->get());
-                                $list=$list1->transform(function($item){
-                                    return $this->show($item);
-                                });
-                    
-                                return response()->json([
-                                    "status"=>200,
-                                    "message"=>"success",
-                                    "error"=>null,
-                                    "data"=>$list   
+                                    "status" => 200,
+                                    "message" => "success",
+                                    "error" => null,
+                                    "data" => $list
                                 ]);
                             }
 
-                            $list1=collect(wekaAccountsTransactions::where('enterprise_id',$request['enterprise_id'])
-                            ->where('user_id',$actualuser->id)
-                            ->whereBetween('done_at',[$request['from'].' 00:00:00',$request['to'].' 23:59:59'])
-                            ->get());
-                            $list=$list1->transform(function($item){
+                            if (isset($request['cashiers']) && count($request['cashiers']) > 0) {
+
+                                $list1 = collect(wekaAccountsTransactions::whereIn('user_id', $request['cashiers'])
+                                    ->where('user_id', $actualuser->id)
+                                    ->whereBetween('done_at', [$request['from'] . ' 00:00:00', $request['to'] . ' 23:59:59'])
+                                    ->get());
+                                $list = $list1->transform(function ($item) {
+                                    return $this->show($item);
+                                });
+
+                                return response()->json([
+                                    "status" => 200,
+                                    "message" => "success",
+                                    "error" => null,
+                                    "data" => $list
+                                ]);
+                            }
+
+                            if (isset($request['moneys']) && count($request['moneys']) > 0) {
+
+                                $list1 = collect(wekaAccountsTransactions::join('wekamemberaccounts', 'weka_accounts_transactions.member_account_id', '=', 'wekamemberaccounts.id')
+                                    ->where('weka_accounts_transactions.user_id', $actualuser->id)
+                                    ->whereIn('wekamemberaccounts.money_id', $request['moneys'])
+                                    ->whereBetween('done_at', [$request['from'] . ' 00:00:00', $request['to'] . ' 23:59:59'])
+                                    ->get());
+                                $list = $list1->transform(function ($item) {
+                                    return $this->show($item);
+                                });
+
+                                return response()->json([
+                                    "status" => 200,
+                                    "message" => "success",
+                                    "error" => null,
+                                    "data" => $list
+                                ]);
+                            }
+
+                            $list1 = collect(wekaAccountsTransactions::where('enterprise_id', $request['enterprise_id'])
+                                ->where('user_id', $actualuser->id)
+                                ->whereBetween('done_at', [$request['from'] . ' 00:00:00', $request['to'] . ' 23:59:59'])
+                                ->get());
+                            $list = $list1->transform(function ($item) {
                                 return $this->show($item);
                             });
-                
+
                             return response()->json([
-                                "status"=>200,
-                                "message"=>"success",
-                                "error"=>null,
-                                "data"=>$list
+                                "status" => 200,
+                                "message" => "success",
+                                "error" => null,
+                                "data" => $list
                             ]);
                         } catch (Exception $th) {
                             return response()->json([
-                                "status"=>500,
-                                "message"=>"error",
-                                "error"=>$th->getMessage(),
-                                "data"=>null
+                                "status" => 500,
+                                "message" => "error",
+                                "error" => $th->getMessage(),
+                                "data" => null
                             ]);
                         }
                     }
-                }else{
+                } else {
                     return response()->json([
-                        "status"=>400,
-                        "message"=>"error",
-                        "error"=>"unknown enterprise",
-                        "data"=>null
+                        "status" => 400,
+                        "message" => "error",
+                        "error" => "unknown enterprise",
+                        "data" => null
                     ]);
                 }
-
-            }else{
+            } else {
                 return response()->json([
-                    "status"=>400,
-                    "message"=>"error",
-                    "error"=>"unknown user",
-                    "data"=>null
+                    "status" => 400,
+                    "message" => "error",
+                    "error" => "unknown user",
+                    "data" => null
                 ]);
             }
-        }
-        else{
+        } else {
             return response()->json([
-                "status"=>400,
-                "message"=>"error",
-                "error"=>"user not sent",
-                "data"=>null
+                "status" => 400,
+                "message" => "error",
+                "error" => "user not sent",
+                "data" => null
             ]);
         }
     }
 
     public function getUserStats(Request $request)
-{
-    $user = Auth::user();
+    {
+        $user = Auth::user();
 
-    $request->validate([
-        'period' => 'nullable|string|in:7_days,this_week,this_month,this_year',
-    ]);
+        $request->validate([
+            'period' => 'nullable|string|in:7_days,this_week,this_month,this_year',
+        ]);
 
-    $period = $request->period ?? '7_days';
+        $period = $request->period ?? '7_days';
 
-    // Base query
-    $query = wekaAccountsTransactions::query()
-        ->where('member_id', $user->id)
-        ->with(['memberAccount.money']);
+        // Base query
+        $query = wekaAccountsTransactions::query()
+            ->where('member_id', $user->id)
+            ->with(['memberAccount.money']);
 
-    $stats = [];
+        $stats = [];
 
-    switch ($period) {
+        switch ($period) {
 
-        case '7_days':
-            $start = Carbon::now()->subDays(6)->startOfDay();
-            $end = Carbon::now()->endOfDay();
+            case '7_days':
+                $start = Carbon::now()->subDays(6)->startOfDay();
+                $end = Carbon::now()->endOfDay();
 
-            // Initialiser les 7 jours
-            $dates = [];
-            for ($i = 0; $i < 7; $i++) {
-                $day = Carbon::now()->subDays($i)->format('Y-m-d');
-                $dates[$day] = [
-                    'deposits' => [],
-                    'withdrawals' => [],
-                    'balance_net' => []
-                ];
-            }
-
-            $transactions = $query->whereBetween('done_at', [$start, $end])->get();
-
-            foreach ($transactions as $t) {
-                $day = Carbon::parse($t->done_at)->format('Y-m-d');
-                $money = $t->memberAccount->money->abreviation ?? 'USD';
-
-                if ($t->type === 'deposit') {
-                    $dates[$day]['deposits'][$money] = ($dates[$day]['deposits'][$money] ?? 0) + $t->amount;
-                } elseif ($t->type === 'withdraw') {
-                    $dates[$day]['withdrawals'][$money] = ($dates[$day]['withdrawals'][$money] ?? 0) + $t->amount;
+                // Initialiser les 7 jours
+                $dates = [];
+                for ($i = 0; $i < 7; $i++) {
+                    $day = Carbon::now()->subDays($i)->format('Y-m-d');
+                    $dates[$day] = [
+                        'deposits' => [],
+                        'withdrawals' => [],
+                        'balance_net' => []
+                    ];
                 }
 
-                $dates[$day]['balance_net'][$money] =
-                    ($dates[$day]['deposits'][$money] ?? 0)
-                    - ($dates[$day]['withdrawals'][$money] ?? 0);
-            }
+                $transactions = $query->whereBetween('done_at', [$start, $end])->get();
 
-            $stats = $dates;
-            break;
+                foreach ($transactions as $t) {
+                    $day = Carbon::parse($t->done_at)->format('Y-m-d');
+                    $money = $t->memberAccount->money->abreviation ?? 'USD';
 
-        case 'this_week':
+                    if ($t->type === 'deposit') {
+                        $dates[$day]['deposits'][$money] = ($dates[$day]['deposits'][$money] ?? 0) + $t->amount;
+                    } elseif ($t->type === 'withdraw') {
+                        $dates[$day]['withdrawals'][$money] = ($dates[$day]['withdrawals'][$money] ?? 0) + $t->amount;
+                    }
 
-            // Début semaine (Lundi) — Fin semaine (Dimanche)
-            $start = Carbon::now()->startOfWeek(Carbon::MONDAY);
-            $end = Carbon::now()->endOfWeek(Carbon::SUNDAY);
-
-            $days = [];
-            for ($i = 0; $i < 7; $i++) {
-                $day = $start->copy()->addDays($i)->format('Y-m-d');
-                $days[$day] = [
-                    'deposits' => [],
-                    'withdrawals' => [],
-                    'balance_net' => []
-                ];
-            }
-
-            $transactions = $query->whereBetween('done_at', [$start, $end])->get();
-
-            foreach ($transactions as $t) {
-                $day = Carbon::parse($t->done_at)->format('Y-m-d');
-                $money = $t->memberAccount->money->abreviation ?? 'USD';
-
-                if ($t->type === 'deposit') {
-                    $days[$day]['deposits'][$money] = ($days[$day]['deposits'][$money] ?? 0) + $t->amount;
-                } elseif ($t->type === 'withdraw') {
-                    $days[$day]['withdrawals'][$money] = ($days[$day]['withdrawals'][$money] ?? 0) + $t->amount;
+                    $dates[$day]['balance_net'][$money] =
+                        ($dates[$day]['deposits'][$money] ?? 0)
+                        - ($dates[$day]['withdrawals'][$money] ?? 0);
                 }
 
-                $days[$day]['balance_net'][$money] =
-                    ($days[$day]['deposits'][$money] ?? 0)
-                    - ($days[$day]['withdrawals'][$money] ?? 0);
-            }
+                $stats = $dates;
+                break;
 
-            $stats = $days;
-            break;
+            case 'this_week':
 
-        case 'this_month':
-            $start = Carbon::now()->startOfMonth();
-            $end = Carbon::now()->endOfMonth();
+                // Début semaine (Lundi) — Fin semaine (Dimanche)
+                $start = Carbon::now()->startOfWeek(Carbon::MONDAY);
+                $end = Carbon::now()->endOfWeek(Carbon::SUNDAY);
 
-            $weeks = [];
-            $transactions = $query->whereBetween('done_at', [$start, $end])->get();
+                $days = [];
+                for ($i = 0; $i < 7; $i++) {
+                    $day = $start->copy()->addDays($i)->format('Y-m-d');
+                    $days[$day] = [
+                        'deposits' => [],
+                        'withdrawals' => [],
+                        'balance_net' => []
+                    ];
+                }
 
-            foreach ($transactions as $t) {
-                $week = Carbon::parse($t->done_at)->weekOfMonth;
-                $money = $t->memberAccount->money->abreviation ?? 'USD';
+                $transactions = $query->whereBetween('done_at', [$start, $end])->get();
 
-                $weeks[$week]['deposits'][$money] = ($weeks[$week]['deposits'][$money] ?? 0);
-                $weeks[$week]['withdrawals'][$money] = ($weeks[$week]['withdrawals'][$money] ?? 0);
+                foreach ($transactions as $t) {
+                    $day = Carbon::parse($t->done_at)->format('Y-m-d');
+                    $money = $t->memberAccount->money->abreviation ?? 'USD';
 
-                if ($t->type === 'deposit') $weeks[$week]['deposits'][$money] += $t->amount;
-                elseif ($t->type === 'withdraw') $weeks[$week]['withdrawals'][$money] += $t->amount;
+                    if ($t->type === 'deposit') {
+                        $days[$day]['deposits'][$money] = ($days[$day]['deposits'][$money] ?? 0) + $t->amount;
+                    } elseif ($t->type === 'withdraw') {
+                        $days[$day]['withdrawals'][$money] = ($days[$day]['withdrawals'][$money] ?? 0) + $t->amount;
+                    }
 
-                $weeks[$week]['balance_net'][$money] =
-                    ($weeks[$week]['deposits'][$money] ?? 0)
-                    - ($weeks[$week]['withdrawals'][$money] ?? 0);
-            }
+                    $days[$day]['balance_net'][$money] =
+                        ($days[$day]['deposits'][$money] ?? 0)
+                        - ($days[$day]['withdrawals'][$money] ?? 0);
+                }
 
-            $stats = $weeks;
-            break;
+                $stats = $days;
+                break;
 
-        case 'this_year':
-            $start = Carbon::now()->startOfYear();
-            $end = Carbon::now()->endOfYear();
+            case 'this_month':
+                $start = Carbon::now()->startOfMonth();
+                $end = Carbon::now()->endOfMonth();
 
-            $months = [];
-            $transactions = $query->whereBetween('done_at', [$start, $end])->get();
+                $weeks = [];
+                $transactions = $query->whereBetween('done_at', [$start, $end])->get();
 
-            foreach ($transactions as $t) {
-                $month = Carbon::parse($t->done_at)->format('F');
-                $money = $t->memberAccount->money->abreviation ?? 'USD';
+                foreach ($transactions as $t) {
+                    $week = Carbon::parse($t->done_at)->weekOfMonth;
+                    $money = $t->memberAccount->money->abreviation ?? 'USD';
 
-                $months[$month]['deposits'][$money] = ($months[$month]['deposits'][$money] ?? 0);
-                $months[$month]['withdrawals'][$money] = ($months[$month]['withdrawals'][$money] ?? 0);
+                    $weeks[$week]['deposits'][$money] = ($weeks[$week]['deposits'][$money] ?? 0);
+                    $weeks[$week]['withdrawals'][$money] = ($weeks[$week]['withdrawals'][$money] ?? 0);
 
-                if ($t->type === 'deposit') $months[$month]['deposits'][$money] += $t->amount;
-                elseif ($t->type === 'withdraw') $months[$month]['withdrawals'][$money] += $t->amount;
+                    if ($t->type === 'deposit') $weeks[$week]['deposits'][$money] += $t->amount;
+                    elseif ($t->type === 'withdraw') $weeks[$week]['withdrawals'][$money] += $t->amount;
 
-                $months[$month]['balance_net'][$money] =
-                    ($months[$month]['deposits'][$money] ?? 0)
-                    - ($months[$month]['withdrawals'][$money] ?? 0);
-            }
+                    $weeks[$week]['balance_net'][$money] =
+                        ($weeks[$week]['deposits'][$money] ?? 0)
+                        - ($weeks[$week]['withdrawals'][$money] ?? 0);
+                }
 
-            $stats = $months;
-            break;
+                $stats = $weeks;
+                break;
 
-        default:
-            return response()->json([
-                'status' => 400,
-                'message' => 'Invalid period'
-            ]);
+            case 'this_year':
+                $start = Carbon::now()->startOfYear();
+                $end = Carbon::now()->endOfYear();
+
+                $months = [];
+                $transactions = $query->whereBetween('done_at', [$start, $end])->get();
+
+                foreach ($transactions as $t) {
+                    $month = Carbon::parse($t->done_at)->format('F');
+                    $money = $t->memberAccount->money->abreviation ?? 'USD';
+
+                    $months[$month]['deposits'][$money] = ($months[$month]['deposits'][$money] ?? 0);
+                    $months[$month]['withdrawals'][$money] = ($months[$month]['withdrawals'][$money] ?? 0);
+
+                    if ($t->type === 'deposit') $months[$month]['deposits'][$money] += $t->amount;
+                    elseif ($t->type === 'withdraw') $months[$month]['withdrawals'][$money] += $t->amount;
+
+                    $months[$month]['balance_net'][$money] =
+                        ($months[$month]['deposits'][$money] ?? 0)
+                        - ($months[$month]['withdrawals'][$money] ?? 0);
+                }
+
+                $stats = $months;
+                break;
+
+            default:
+                return response()->json([
+                    'status' => 400,
+                    'message' => 'Invalid period'
+                ]);
+        }
+
+        return response()->json([
+            'status' => 200,
+            'message' => 'success',
+            'data' => $stats
+        ]);
     }
 
-    return response()->json([
-        'status' => 200,
-        'message' => 'success',
-        'data' => $stats
-    ]);
-}
+    public function getWeeklyCurrencyStats(Request $request)
+    {
+        $user = Auth::user();
+        if (!$user) return $this->errorResponse("Non authentifié", 401);
+
+        $tz = $request->timezone ?? 'Africa/Lubumbashi';
+
+        $now   = now($tz)->endOfDay();
+        $start = $now->copy()->subDays(6)->startOfDay();
+
+        // 🔹 Transactions semaine (toutes monnaies)
+        $transactions = wekaAccountsTransactions::query()
+            ->where('member_id', $user->id)
+            ->whereBetween('done_at', [$start, $now])
+            ->with('memberAccount.money:id,abreviation')
+            ->get();
+
+        // 🔹 Initialiser les 7 jours (DATES RÉELLES UNIQUEMENT)
+        $daysTemplate = collect(range(0, 6))->mapWithKeys(function ($i) use ($now) {
+            $date = $now->copy()->subDays(6 - $i)->format('Y-m-d');
+            return [$date => 0];
+        });
+
+        // 🔹 Labels RAW (PAS DE "TODAY" ICI)
+        $labelsRaw = $daysTemplate->keys()->values();
+
+        // 🔹 Grouper par monnaie
+        $datasets = [];
+        $globalTotal = 0;
+
+        foreach ($transactions as $t) {
+            $money = $t->memberAccount->money;
+            if (!$money) continue;
+
+            $code = $money->abreviation;
+            $day  = Carbon::parse($t->done_at)->format('Y-m-d');
+
+            if (!isset($datasets[$code])) {
+                $datasets[$code] = [
+                    'money_id'   => $money->id,
+                    'values'     => $daysTemplate->toArray(),
+                    'total_week' => 0
+                ];
+            }
+            $datasets[$code]['values'][$day] += $t->amount;
+            $datasets[$code]['total_week']   += $t->amount;
+        }
+
+        // 🔹 Convertir values en array simple (ordre conservé)
+        foreach ($datasets as &$data) {
+            $data['values'] = array_values($data['values']);
+        }
+        $globalTotal = $transactions->count();
+        return response()->json([
+            'status'       => 200,
+            'message'      => 'success',
+            'labels_raw'   => $labelsRaw,   // 🔥 IMPORTANT
+            'datasets'     => $datasets,
+            'global_total' => $globalTotal
+        ]);
+    }
 
     public function getUserTransactions(Request $request)
     {
         $authUser = Auth::user();
-        if(!$authUser) return $this->errorResponse("Utilisateur non authentifié",400);
+        if (!$authUser) return $this->errorResponse("Utilisateur non authentifié", 400);
         $memberId = $authUser->id;
         // Validation : tout est nullable sauf per_page
         $request->validate([
@@ -429,26 +493,26 @@ class WekaAccountsTransactionsController extends Controller
                     'this_quarter',
                     'this_year'
                 ])
-                ],
+            ],
             'per_page' => 'nullable|integer|min:1',
             'timezone' => 'nullable|string' // pour gérer le fuseau horaire
         ]);
 
         $tz = $request->timezone ?? 'Africa/Lubumbashi'; // Valeur par défaut
 
-        $perPage = $request->per_page ??5;
+        $perPage = $request->per_page ?? 5;
 
         // Base query
-       $query = wekaAccountsTransactions::query()
-    ->where('member_id', $memberId)
-    ->with([
-        // eager load le compte associé
-        'memberAccount:id,account_number,money_id',
-        // eager load la monnaie associée au compte
-        'memberAccount.money:id,abreviation',
-        // l'utilisateur qui a fait l'opération
-        'doneBy:id,name'
-    ]);
+        $query = wekaAccountsTransactions::query()
+            ->where('member_id', $memberId)
+            ->with([
+                // eager load le compte associé
+                'memberAccount:id,account_number,money_id',
+                // eager load la monnaie associée au compte
+                'memberAccount.money:id,abreviation',
+                // l'utilisateur qui a fait l'opération
+                'doneBy:id,name'
+            ]);
 
 
         // Filtre comptes
@@ -553,8 +617,7 @@ class WekaAccountsTransactionsController extends Controller
                     ]);
                     break;
             }
-        }
-        else {
+        } else {
             if ($start && !$end) {
                 $query->where('done_at', '>=', $start);
             }
@@ -584,7 +647,7 @@ class WekaAccountsTransactionsController extends Controller
         $balance_before = [];
         $balance_after = [];
 
-        foreach($transactions as $t) {
+        foreach ($transactions as $t) {
             $money = $t->memberAccount->money->abreviation ?? 'UNKNOWN';
 
             // Amount total
@@ -594,17 +657,17 @@ class WekaAccountsTransactionsController extends Controller
             $total_fees[$money] = ($total_fees[$money] ?? 0) + $t->fees;
 
             // Deposits
-            if($t->type === 'deposit'){
+            if ($t->type === 'deposit') {
                 $total_deposits[$money] = ($total_deposits[$money] ?? 0) + $t->amount;
             }
 
             // Withdrawals
-            if($t->type === 'withdraw'){
+            if ($t->type === 'withdraw') {
                 $total_withdrawals[$money] = ($total_withdrawals[$money] ?? 0) + $t->amount;
             }
 
             // Balance before
-            if($start && $t->done_at < $start){
+            if ($start && $t->done_at < $start) {
                 $balance_before[$money] = $t->sold_after;
             }
 
@@ -622,7 +685,7 @@ class WekaAccountsTransactionsController extends Controller
             'balance_after' => $balance_after,
         ];
         $balance_net = [];
-        foreach($total_deposits as $money => $deposit){
+        foreach ($total_deposits as $money => $deposit) {
             $withdraw = $total_withdrawals[$money] ?? 0;
             $fees = $total_fees[$money] ?? 0;
             $balance_net[$money] = $deposit - $withdraw - $fees;
@@ -631,7 +694,7 @@ class WekaAccountsTransactionsController extends Controller
         // Ajouter au tableau de stats
         $stats['balance_net'] = $balance_net;
 
-       $allResults = $query->get();
+        $allResults = $query->get();
 
         // Appliquer show() à chaque item
         $formatted = $allResults->map(function ($t) {
@@ -662,7 +725,7 @@ class WekaAccountsTransactionsController extends Controller
         ]);
     }
 
-  
+
     public function getTransactionslistByUser(Request $request)
     {
         if (!isset($request->user_id) || empty($request->user_id)) {
@@ -844,7 +907,6 @@ class WekaAccountsTransactionsController extends Controller
                 "all_ids"          => $allIds,
                 "totals_by_money"  => $totalsByMoney
             ]);
-
         } catch (Exception $ex) {
             return $this->errorResponse($ex->getMessage(), 500);
         }
@@ -934,222 +996,222 @@ class WekaAccountsTransactionsController extends Controller
                 "all_ids" => $allIds,
                 "totals_by_money" => $totalsByMoney
             ]);
-            } catch (\Exception $ex) {
-                return $this->errorResponse($ex->getMessage(), 500);
-            }
+        } catch (\Exception $ex) {
+            return $this->errorResponse($ex->getMessage(), 500);
+        }
     }
 
     /**
      * Dashboard mobile AT WEKA AKIBA
      */
-    public function dashboardmobileatwekaakiba(Request $request){
-         // return $request;
-         $list=[];
-         if(isset($request->from)==false && empty($request->from) && isset($request->to)==false && empty($request->to)){
-             $request['from']= date('Y-m-d');
-             $request['to']=date('Y-m-d');
-         }
- 
-         if (isset($request->user_id)) {
-             $actualuser=$this->getinfosuser($request->user_id);
-             if ($actualuser) {
-                 $ese=$this->getEse($actualuser->id);
-                 if ($ese) {
-                    $moneys=collect(moneys::where("enterprise_id",$ese['id'])->get());
+    public function dashboardmobileatwekaakiba(Request $request)
+    {
+        // return $request;
+        $list = [];
+        if (isset($request->from) == false && empty($request->from) && isset($request->to) == false && empty($request->to)) {
+            $request['from'] = date('Y-m-d');
+            $request['to'] = date('Y-m-d');
+        }
+
+        if (isset($request->user_id)) {
+            $actualuser = $this->getinfosuser($request->user_id);
+            if ($actualuser) {
+                $ese = $this->getEse($actualuser->id);
+                if ($ese) {
+                    $moneys = collect(moneys::where("enterprise_id", $ese['id'])->get());
                     //report for no super admin users
                     try {
-                        $list1=collect(wekaAccountsTransactions::where('enterprise_id',$ese['id'])
-                        ->where('user_id',$actualuser->id)
-                        ->whereBetween('done_at',[$request['from'].' 00:00:00',$request['to'].' 23:59:59'])
-                        ->get());
-                        $list=$list1->transform(function($item){
+                        $list1 = collect(wekaAccountsTransactions::where('enterprise_id', $ese['id'])
+                            ->where('user_id', $actualuser->id)
+                            ->whereBetween('done_at', [$request['from'] . ' 00:00:00', $request['to'] . ' 23:59:59'])
+                            ->get());
+                        $list = $list1->transform(function ($item) {
                             return $this->show($item);
                         });
-            
-                        
-                        $sells=$moneys->transform(function ($money) use($request){
-                            $invoices=Invoices::whereBetween('date_operation',[$request['from'].' 00:00:00',$request['to'].' 23:59:59'])
-                            ->where('money_id','=',$money['id'])
-                            ->where('type_facture','<>','proforma')
-                            ->where('edited_by_id',$request->user_id)
-                            ->get();
-                            $money['totalsells']=$invoices->sum('netToPay');
+
+
+                        $sells = $moneys->transform(function ($money) use ($request) {
+                            $invoices = Invoices::whereBetween('date_operation', [$request['from'] . ' 00:00:00', $request['to'] . ' 23:59:59'])
+                                ->where('money_id', '=', $money['id'])
+                                ->where('type_facture', '<>', 'proforma')
+                                ->where('edited_by_id', $request->user_id)
+                                ->get();
+                            $money['totalsells'] = $invoices->sum('netToPay');
                             return $money;
                         });
-                
-                        $moneysmises=collect(moneys::where("enterprise_id",$ese['id'])->get());
-                        $mises=$moneysmises->transform(function ($money) use($request){
-                            $transactions=wekaAccountsTransactions::join('wekamemberaccounts as WA','weka_accounts_transactions.member_account_id','WA.id')
-                            ->join('moneys as M','WA.money_id','M.id')
-                            ->whereBetween('weka_accounts_transactions.done_at',[$request['from'].' 00:00:00',$request['to'].' 23:59:59'])
-                            ->where('WA.money_id','=',$money['id'])
-                            ->where('weka_accounts_transactions.user_id',$request->user_id)
-                            ->get();
-                
-                            $money['totaltransactions']=$transactions->sum('amount');
-                
+
+                        $moneysmises = collect(moneys::where("enterprise_id", $ese['id'])->get());
+                        $mises = $moneysmises->transform(function ($money) use ($request) {
+                            $transactions = wekaAccountsTransactions::join('wekamemberaccounts as WA', 'weka_accounts_transactions.member_account_id', 'WA.id')
+                                ->join('moneys as M', 'WA.money_id', 'M.id')
+                                ->whereBetween('weka_accounts_transactions.done_at', [$request['from'] . ' 00:00:00', $request['to'] . ' 23:59:59'])
+                                ->where('WA.money_id', '=', $money['id'])
+                                ->where('weka_accounts_transactions.user_id', $request->user_id)
+                                ->get();
+
+                            $money['totaltransactions'] = $transactions->sum('amount');
+
                             return $money;
                         });
 
                         Carbon::setLocale('fr');
-                        $actualmonth=Carbon::now()->translatedFormat('F Y');
+                        $actualmonth = Carbon::now()->translatedFormat('F Y');
                         $startOfMonth = Carbon::now()->startOfMonth(); // Début du mois
                         $endOfMonth = Carbon::now()->endOfMonth();     // Fin du mois
 
-                        $moneysfirstentries=collect(moneys::where("enterprise_id",$ese['id'])->get());
-                        $monthlyfirstentries=$moneysfirstentries->transform(function ($money) use($request,$startOfMonth,$endOfMonth){
-                            $mouvements=wekafirstentries::whereBetween('done_at',[$startOfMonth.' 00:00:00', $endOfMonth.' 23:59:59'])
-                            ->where('money_id','=',$money['id'])
-                            ->where('collector_id',$request->user_id)
-                            ->get();
-                
-                            $money['totalfirstentries']=$mouvements->sum('amount');
-                
+                        $moneysfirstentries = collect(moneys::where("enterprise_id", $ese['id'])->get());
+                        $monthlyfirstentries = $moneysfirstentries->transform(function ($money) use ($request, $startOfMonth, $endOfMonth) {
+                            $mouvements = wekafirstentries::whereBetween('done_at', [$startOfMonth . ' 00:00:00', $endOfMonth . ' 23:59:59'])
+                                ->where('money_id', '=', $money['id'])
+                                ->where('collector_id', $request->user_id)
+                                ->get();
+
+                            $money['totalfirstentries'] = $mouvements->sum('amount');
+
                             return $money;
                         });
 
-                        $moneysmonthlysells=collect(moneys::where("enterprise_id",$ese['id'])->get());
-                        $monthlysells=$moneysmonthlysells->transform(function ($money) use($request,$startOfMonth,$endOfMonth){
-                            $invoices=Invoices::whereBetween('date_operation',[$startOfMonth.' 00:00:00', $endOfMonth.' 23:59:59'])
-                            ->where('money_id','=',$money['id'])
-                            ->where('type_facture','<>','proforma')
-                            ->where('edited_by_id',$request->user_id)
-                            ->get();
-                            $money['totalsells']=$invoices->sum('netToPay');
+                        $moneysmonthlysells = collect(moneys::where("enterprise_id", $ese['id'])->get());
+                        $monthlysells = $moneysmonthlysells->transform(function ($money) use ($request, $startOfMonth, $endOfMonth) {
+                            $invoices = Invoices::whereBetween('date_operation', [$startOfMonth . ' 00:00:00', $endOfMonth . ' 23:59:59'])
+                                ->where('money_id', '=', $money['id'])
+                                ->where('type_facture', '<>', 'proforma')
+                                ->where('edited_by_id', $request->user_id)
+                                ->get();
+                            $money['totalsells'] = $invoices->sum('netToPay');
                             return $money;
                         });
-                    
-                
+
+
                         return response()->json([
-                            "status"=>200,
-                            "message"=>"success",
-                            "error"=>null,
-                            "dailytransactions"=>$list,
-                            "dailysells"=>$sells,
-                            "dailymises"=>$mises,
-                            "monthlyfirstentries"=>$monthlyfirstentries,
-                            "monthlysells"=>$monthlysells,
-                            "actualmonth"=>$actualmonth,
-                            "startofthemonth" =>$startOfMonth->translatedFormat('d F Y'),
-                            "endofthemonth" =>$endOfMonth->translatedFormat('d F Y'),
+                            "status" => 200,
+                            "message" => "success",
+                            "error" => null,
+                            "dailytransactions" => $list,
+                            "dailysells" => $sells,
+                            "dailymises" => $mises,
+                            "monthlyfirstentries" => $monthlyfirstentries,
+                            "monthlysells" => $monthlysells,
+                            "actualmonth" => $actualmonth,
+                            "startofthemonth" => $startOfMonth->translatedFormat('d F Y'),
+                            "endofthemonth" => $endOfMonth->translatedFormat('d F Y'),
                         ]);
                     } catch (Exception $th) {
                         return response()->json([
-                            "status"=>500,
-                            "message"=>"error",
-                            "error"=>$th->getMessage(),
-                            "data"=>null
+                            "status" => 500,
+                            "message" => "error",
+                            "error" => $th->getMessage(),
+                            "data" => null
                         ]);
                     }
-                 }else{
-                     return response()->json([
-                         "status"=>400,
-                         "message"=>"error",
-                         "error"=>"unknown enterprise",
-                         "data"=>null
-                     ]);
-                 }
- 
-             }else{
-                 return response()->json([
-                     "status"=>400,
-                     "message"=>"error",
-                     "error"=>"unknown user",
-                     "data"=>null
-                 ]);
-             }
-         }
-         else{
-             return response()->json([
-                 "status"=>400,
-                 "message"=>"error",
-                 "error"=>"user not sent",
-                 "data"=>null
-             ]);
-         }
+                } else {
+                    return response()->json([
+                        "status" => 400,
+                        "message" => "error",
+                        "error" => "unknown enterprise",
+                        "data" => null
+                    ]);
+                }
+            } else {
+                return response()->json([
+                    "status" => 400,
+                    "message" => "error",
+                    "error" => "unknown user",
+                    "data" => null
+                ]);
+            }
+        } else {
+            return response()->json([
+                "status" => 400,
+                "message" => "error",
+                "error" => "user not sent",
+                "data" => null
+            ]);
+        }
     }
     /**
      *Report transactions grouped by  
      */
-    public function reportTransactionsgroupebBy(Request $request){
+    public function reportTransactionsgroupebBy(Request $request)
+    {
         try {
             switch ($request['criteria']) {
                 case 'cashiers':
-                    $list1=collect(wekaAccountsTransactions::where('enterprise_id',$request['enterprise_id'])
-                    ->whereBetween('done_at',[$request['from'].' 00:00:00',$request['to'].' 23:59:59'])
-                    ->select('user_id')
-                    ->groupBy('user_id')
-                    ->get());
-                    $list=$list1->transform(function($item) use($request){
-                       $cashier=User::find($item['user_id']);
+                    $list1 = collect(wekaAccountsTransactions::where('enterprise_id', $request['enterprise_id'])
+                        ->whereBetween('done_at', [$request['from'] . ' 00:00:00', $request['to'] . ' 23:59:59'])
+                        ->select('user_id')
+                        ->groupBy('user_id')
+                        ->get());
+                    $list = $list1->transform(function ($item) use ($request) {
+                        $cashier = User::find($item['user_id']);
 
-                      $transactions=collect(wekaAccountsTransactions::where('enterprise_id',$request['enterprise_id'])
-                      ->where('user_id',$cashier->id)
-                      ->whereBetween('done_at',[$request['from'].' 00:00:00',$request['to'].' 23:59:59'])
-                      ->get());
-                      $transactions=$transactions->transform(function($transaction){
-                          return $this->show($transaction);
-                      });
-                        $grouped =$transactions->groupBy('abreviation');
+                        $transactions = collect(wekaAccountsTransactions::where('enterprise_id', $request['enterprise_id'])
+                            ->where('user_id', $cashier->id)
+                            ->whereBetween('done_at', [$request['from'] . ' 00:00:00', $request['to'] . ' 23:59:59'])
+                            ->get());
+                        $transactions = $transactions->transform(function ($transaction) {
+                            return $this->show($transaction);
+                        });
+                        $grouped = $transactions->groupBy('abreviation');
                         $grouped->all();
-                      $cashier['transactions']=$transactions;
-                      return $cashier;
+                        $cashier['transactions'] = $transactions;
+                        return $cashier;
                         // return $this->show($item);
                     });
-        
+
                     return response()->json([
-                        "status"=>200,
-                        "message"=>"success",
-                        "from"=>$request['from'],
-                        "to"=>$request['to'],
-                        "error"=>null,
-                        "data"=>$list
+                        "status" => 200,
+                        "message" => "success",
+                        "from" => $request['from'],
+                        "to" => $request['to'],
+                        "error" => null,
+                        "data" => $list
                     ]);
                     break;
-                    
-                    case 'moneys':
-                    $list1=collect(wekaAccountsTransactions::where('enterprise_id',$request['enterprise_id'])
-                    ->whereBetween('done_at',[$request['from'].' 00:00:00',$request['to'].' 23:59:59'])
-                    ->select('user_id')
-                    ->groupBy('user_id')
-                    ->get());
-                    $list=$list1->transform(function($item) use($request){
-                       $cashier=User::find($item['user_id']);
 
-                      $transactions=collect(wekaAccountsTransactions::where('enterprise_id',$request['enterprise_id'])
-                      ->where('user_id',$cashier->id)
-                      ->whereBetween('done_at',[$request['from'].' 00:00:00',$request['to'].' 23:59:59'])
-                      ->get());
-                      $transactions=$transactions->transform(function($transaction){
-                          return $this->show($transaction);
-                      });
-                        $grouped =$transactions->groupBy('abreviation');
+                case 'moneys':
+                    $list1 = collect(wekaAccountsTransactions::where('enterprise_id', $request['enterprise_id'])
+                        ->whereBetween('done_at', [$request['from'] . ' 00:00:00', $request['to'] . ' 23:59:59'])
+                        ->select('user_id')
+                        ->groupBy('user_id')
+                        ->get());
+                    $list = $list1->transform(function ($item) use ($request) {
+                        $cashier = User::find($item['user_id']);
+
+                        $transactions = collect(wekaAccountsTransactions::where('enterprise_id', $request['enterprise_id'])
+                            ->where('user_id', $cashier->id)
+                            ->whereBetween('done_at', [$request['from'] . ' 00:00:00', $request['to'] . ' 23:59:59'])
+                            ->get());
+                        $transactions = $transactions->transform(function ($transaction) {
+                            return $this->show($transaction);
+                        });
+                        $grouped = $transactions->groupBy('abreviation');
                         $grouped->all();
-                      $cashier['transactions']=$transactions;
-                      return $cashier;
+                        $cashier['transactions'] = $transactions;
+                        return $cashier;
                         // return $this->show($item);
                     });
-        
+
                     return response()->json([
-                        "status"=>200,
-                        "message"=>"success",
-                        "from"=>$request['from'],
-                        "to"=>$request['to'],
-                        "error"=>null,
-                        "data"=>$list
+                        "status" => 200,
+                        "message" => "success",
+                        "from" => $request['from'],
+                        "to" => $request['to'],
+                        "error" => null,
+                        "data" => $list
                     ]);
                     break;
-                
+
                 default:
                     # code...
                     break;
             }
         } catch (Exception $th) {
             return response()->json([
-                "status"=>500,
-                "message"=>"error",
-                "error"=>$th->getMessage(),
-                "data"=>null
+                "status" => 500,
+                "message" => "error",
+                "error" => $th->getMessage(),
+                "data" => null
             ]);
         }
     }
@@ -1157,110 +1219,112 @@ class WekaAccountsTransactionsController extends Controller
     /**
      * Multiple Transactions update
      */
-    public function updatetransactions(Request $request){
-        $savedtransactions=[];
+    public function updatetransactions(Request $request)
+    {
+        $savedtransactions = [];
         if ($request['user']) {
-            $actualuser=user::find($request['user']['id']); 
-            if ($actualuser && $actualuser['user_type']=="super_admin") {
+            $actualuser = user::find($request['user']['id']);
+            if ($actualuser && $actualuser['user_type'] == "super_admin") {
                 if ($request['statusSent'] && filled($request['statusSent'])) {
-                     try {
-                            DB::beginTransaction();
-                            foreach ($request['data'] as $transaction) {
-                                $transactionupdated=wekaAccountsTransactions::find($transaction['id']);
-                                $memberaccount=wekamemberaccounts::find($transactionupdated['member_account_id']);
-                                if ($transactionupdated && $transactionupdated['transaction_status']="pending") {
-                                    if ($memberaccount) {
-                                        //if the account is enabled
-                                        if($memberaccount->account_status=="enabled"){
-                                            if ($transactionupdated['type']=="deposit") {
-                                                $memberaccountupdated=$memberaccount;
-                                                $memberaccountupdated->sold=$memberaccount->sold+$transactionupdated['amount'];
-                                                $memberaccountupdated->save();
-                                                //update transaction
-                                                $transactionupdated['transaction_status']=$request['statusSent'];
-                                                $transactionupdated->save();   
-                                            }
-                                        }else{
-                                            $transactionupdated['message']="error";
-                                            $transactionupdated['error']="account disabled";
+                    try {
+                        DB::beginTransaction();
+                        foreach ($request['data'] as $transaction) {
+                            $transactionupdated = wekaAccountsTransactions::find($transaction['id']);
+                            $memberaccount = wekamemberaccounts::find($transactionupdated['member_account_id']);
+                            if ($transactionupdated && $transactionupdated['transaction_status'] = "pending") {
+                                if ($memberaccount) {
+                                    //if the account is enabled
+                                    if ($memberaccount->account_status == "enabled") {
+                                        if ($transactionupdated['type'] == "deposit") {
+                                            $memberaccountupdated = $memberaccount;
+                                            $memberaccountupdated->sold = $memberaccount->sold + $transactionupdated['amount'];
+                                            $memberaccountupdated->save();
+                                            //update transaction
+                                            $transactionupdated['transaction_status'] = $request['statusSent'];
+                                            $transactionupdated->save();
                                         }
-                                    }else{
-                                        $transactionupdated['message']="error";
-                                        $transactionupdated['error']="no account find";
+                                    } else {
+                                        $transactionupdated['message'] = "error";
+                                        $transactionupdated['error'] = "account disabled";
                                     }
-                                }else{
-                                    $transactionupdated['message']="error";
-                                    $transactionupdated['error']="transaction already validated";
+                                } else {
+                                    $transactionupdated['message'] = "error";
+                                    $transactionupdated['error'] = "no account find";
                                 }
-                                
-                                array_push($savedtransactions,$this->show($transactionupdated));
+                            } else {
+                                $transactionupdated['message'] = "error";
+                                $transactionupdated['error'] = "transaction already validated";
                             }
-                            DB::commit();
-                            return response()->json([
-                                "status"=>200,
-                                "message"=>"success",
-                                "error"=>null,
-                                "data"=>$savedtransactions
-                            ]);
-                        } catch (Exception $th) {
-                            DB::rollBack();
-                            //throw $th;
-                            return response()->json([
-                                "status"=>500,
-                                "message"=>"error",
-                                "error"=>$th->getMessage(),
-                                "data"=>null
-                            ]);
+
+                            array_push($savedtransactions, $this->show($transactionupdated));
                         }
-                }else{
-                     return response()->json([
-                        "status"=>402,
-                        "message"=>"error",
-                        "error"=>"no status sent",
-                        "data"=>null
-                  ]);  
+                        DB::commit();
+                        return response()->json([
+                            "status" => 200,
+                            "message" => "success",
+                            "error" => null,
+                            "data" => $savedtransactions
+                        ]);
+                    } catch (Exception $th) {
+                        DB::rollBack();
+                        //throw $th;
+                        return response()->json([
+                            "status" => 500,
+                            "message" => "error",
+                            "error" => $th->getMessage(),
+                            "data" => null
+                        ]);
+                    }
+                } else {
+                    return response()->json([
+                        "status" => 402,
+                        "message" => "error",
+                        "error" => "no status sent",
+                        "data" => null
+                    ]);
                 }
-            }else{
+            } else {
                 return response()->json([
-                    "status"=>402,
-                    "message"=>"error",
-                    "error"=>"unauthorized user",
-                    "data"=>null
-                ]);   
+                    "status" => 402,
+                    "message" => "error",
+                    "error" => "unauthorized user",
+                    "data" => null
+                ]);
             }
-        }else{
+        } else {
             return response()->json([
-                "status"=>402,
-                "message"=>"error",
-                "error"=>"unknown user",
-                "data"=>null
-            ]);   
+                "status" => 402,
+                "message" => "error",
+                "error" => "unknown user",
+                "data" => null
+            ]);
         }
     }
 
-     /**
+    /**
      * Offline data gotten
      */
-    public function syncing(Request $request){
+    public function syncing(Request $request)
+    {
         $datatoreturn = [];
         try {
             foreach ($request['offlinetransactions'] as  $value) {
-               $newsync = $this->syncingstore(new Request($value));
-                array_push($datatoreturn,$newsync);
+                $newsync = $this->syncingstore(new Request($value));
+                array_push($datatoreturn, $newsync);
             }
 
             return response()->json([
-                "status"=>200,
-                "message"=>"success",
-                "error"=>null,
-                "data"=>$datatoreturn
-            ]); 
+                "status" => 200,
+                "message" => "success",
+                "error" => null,
+                "data" => $datatoreturn
+            ]);
         } catch (Exception $th) {
             return response()->json([
-                "status"=>500,
-                "message"=>"error",
-                "error"=>$th->getMessage(),
-                "data"=>null
+                "status" => 500,
+                "message" => "error",
+                "error" => $th->getMessage(),
+                "data" => null
             ]);
         }
     }
@@ -1287,13 +1351,13 @@ class WekaAccountsTransactionsController extends Controller
             $user = $request->user();
             if (!$user) {
                 return $this->errorResponse("Utilisateur non authentifié", 401);
-            } 
-            
-            if ($user->status!=="enabled") {
+            }
+
+            if ($user->status !== "enabled") {
                 return $this->errorResponse("Vous êtes bloqué(e). Veuillez contacter votre administrateur système.", 401);
             }
 
-            $accountId =$request['member_account_id'] ?? null;
+            $accountId = $request['member_account_id'] ?? null;
             $type = $request['type'] ?? null;
             $amount = $request['amount'] ?? 0;
             $motif = $request['motif'] ?? '';
@@ -1302,12 +1366,12 @@ class WekaAccountsTransactionsController extends Controller
 
             if (!$type) {
                 return $this->errorResponse("Vous devez envoyer un type.");
-            } 
-            
+            }
+
             if (!$nature) {
                 return $this->errorResponse("Vous devez envoyer une nature.");
             }
-            
+
             if (!$accountId || $accountId <= 0) {
                 return $this->errorResponse("Vous devez sélectionner un compte à " . ($type === 'deposit' ? 'débiter' : 'créditer'));
             }
@@ -1320,7 +1384,7 @@ class WekaAccountsTransactionsController extends Controller
                 return $this->errorResponse("Veuillez fournir le motif svp!");
             }
 
-            if ($type === 'deposit' && $fundId <= 0 && $nature==='cash_virtual') {
+            if ($type === 'deposit' && $fundId <= 0 && $nature === 'cash_virtual') {
                 return $this->errorResponse("Vous devez sélectionner une caisse");
             }
 
@@ -1333,7 +1397,7 @@ class WekaAccountsTransactionsController extends Controller
                 return $this->errorResponse("Le compte du membre est désactivé. Action non autorisée");
             }
 
-               switch ($nature) {
+            switch ($nature) {
                 case 'cash_virtual':
                     return $this->cashToVirtual($request);
                     break;
@@ -1342,17 +1406,16 @@ class WekaAccountsTransactionsController extends Controller
                     break;
                 case 'tub_account':
                     $this->tubToAccount($request);
-                    break; 
+                    break;
                 case 'finance_withdrawal':
                     $this->financeWithdraw($request);
-                    break; 
+                    break;
                 // case 'mobile_money_account':
                 //     $this->handleMobileMoneyAccount($request,$user);
                 //     break;
                 default:
-                return $this->errorResponse("Type d'opération invalide");
+                    return $this->errorResponse("Type d'opération invalide");
             }
-
         } catch (\Exception $e) {
             DB::rollBack();
             return $this->errorResponse($e->getMessage(), 500);
@@ -1387,7 +1450,6 @@ class WekaAccountsTransactionsController extends Controller
                     'total'  => $amount + $fees
                 ]
             ], 200);
-
         } catch (\Exception $e) {
 
             Log::error("FEES CALC ERROR", [
@@ -1403,69 +1465,70 @@ class WekaAccountsTransactionsController extends Controller
         }
     }
 
-    public function handleMobileMoneyAccount(Request $request){
-        $user=Auth::user();
-        $amount=$request['amount'];
-        $motif=$request['motif'];
-        $currency=$request['currency'] ?? null;
-        $provider=$request['mobile_money_provider'] ?? null;
-        $phone=$request['phone_number'] ?? null;
-       
-        if(!$user){
+    public function handleMobileMoneyAccount(Request $request)
+    {
+        $user = Auth::user();
+        $amount = $request['amount'];
+        $motif = $request['motif'];
+        $currency = $request['currency'] ?? null;
+        $provider = $request['mobile_money_provider'] ?? null;
+        $phone = $request['phone_number'] ?? null;
+
+        if (!$user) {
             return $this->errorResponse("Utilisateur non authentifié");
         }
 
-        if(!$phone){
+        if (!$phone) {
             return $this->errorResponse("Vous devez fournir une numero de telephone");
-        } 
-        
-        if (!PhoneHelper::isValidPhone($phone,"CD")) {
+        }
+
+        if (!PhoneHelper::isValidPhone($phone, "CD")) {
             return $this->errorResponse("Numéro invalide.");
         }
-        
-        $country=PhoneHelper::getCountry($phone);
-        if(!$currency){
+
+        $country = PhoneHelper::getCountry($phone);
+        if (!$currency) {
             return $this->errorResponse("Vous devez fournir une devise");
-        } 
-        
-        if(!$amount || $amount<=0){
+        }
+
+        if (!$amount || $amount <= 0) {
             return $this->errorResponse("Vous devez fournir un montant svp");
-        } 
-        
-        if(!$provider){
+        }
+
+        if (!$provider) {
             return $this->errorResponse("Vous devez fournir un fournisseur");
         }
 
-        $providerFind=MobileMoneyProviders::find($provider);
-        
-        if(!$providerFind){
+        $providerFind = MobileMoneyProviders::find($provider);
+
+        if (!$providerFind) {
             return $this->errorResponse("Fournisseur introuvable");
         }
 
-        if(!$providerFind->isavailable()){
+        if (!$providerFind->isavailable()) {
             return $this->errorResponse("Fournisseur désactivé");
         }
 
-        if(!$country!==$providerFind->country){
+        if (!$country !== $providerFind->country) {
             return $this->errorResponse("Le numero n'est pas du pays configuré");
         }
 
-        $memberAccount=wekamemberaccounts::findByMemberAndCurrency($user,$currency);
-        if(!$memberAccount){
+        $memberAccount = wekamemberaccounts::findByMemberAndCurrency($user, $currency);
+        if (!$memberAccount) {
             return $this->errorResponse("Compte du membre introuvable");
         }
 
-        if(!$memberAccount->isavailable()){
+        if (!$memberAccount->isavailable()) {
             return $this->errorResponse("Compte du membre désactivé");
         }
 
-        try{
+        try {
             DB::beginTransaction();
-            $memberAccountSoldBefore=$memberAccount->sold;
-            $memberAccount->sold=$memberAccount->sold+$amount;
-            $memberAccountSoldAfter=$memberAccount->sold;
+            $memberAccountSoldBefore = $memberAccount->sold;
+            $memberAccount->sold = $memberAccount->sold + $amount;
+            $memberAccountSoldAfter = $memberAccount->sold;
             $memberAccount->save();
-            $transaction=$this->createTransaction(
+            $transaction = $this->createTransaction(
                 $amount,
                 $memberAccountSoldBefore,
                 $memberAccountSoldAfter,
@@ -1475,14 +1538,14 @@ class WekaAccountsTransactionsController extends Controller
                 $memberAccount->id,
                 $memberAccount->user_id,
                 null,
-                $user->full_name?$user->full_name:$user->user_name,
+                $user->full_name ? $user->full_name : $user->user_name,
                 0,
-                $phone?? null,
-                $user->adress?? null
+                $phone ?? null,
+                $user->adress ?? null
             );
             DB::commit();
-            return $this->successResponse('success',$this->show($transaction));
-        }catch (\Exception $e){
+            return $this->successResponse('success', $this->show($transaction));
+        } catch (\Exception $e) {
             DB::rollBack();
             return $this->errorResponse($e->getMessage(), 500);
         }
@@ -1516,11 +1579,11 @@ class WekaAccountsTransactionsController extends Controller
                     break;
                 case 'tub_account':
                     $this->tubToAccount($request);
-                    break; 
+                    break;
                 case 'mobile_money_account':
                     break;
                 default:
-                return $this->errorResponse("Type d'opération invalide");
+                    return $this->errorResponse("Type d'opération invalide");
             }
             // Création de la transaction
             $transaction = wekaAccountsTransactions::create([
@@ -1545,7 +1608,6 @@ class WekaAccountsTransactionsController extends Controller
 
             DB::commit();
             return $this->successResponse("success", $this->show($transaction));
-
         } catch (\Exception $e) {
             DB::rollBack();
             return $this->errorResponse($e->getMessage(), 500);
@@ -1553,604 +1615,628 @@ class WekaAccountsTransactionsController extends Controller
     }
 
 
-private function financeWithdraw($request)
-{
-    $user=Auth::user();
-    $accountId =$request['member_account_id'] ?? null;
-    $amount=$request['amount'];
-    $motif=$request['motif'];
+    private function financeWithdraw($request)
+    {
+        $user = Auth::user();
+        $accountId = $request['member_account_id'] ?? null;
+        $amount = $request['amount'];
+        $motif = $request['motif'];
 
-    if(!$accountId){
-        return $this->errorResponse("Identifiant du Compte introuvable");
-    }
-
-    $memberAccount=wekamemberaccounts::find($accountId);
-
-    if(!$memberAccount){
-        return $this->errorResponse("Compte du membre introuvable");
-    }
-
-    if(!$memberAccount->isavailable()){
-        return $this->errorResponse("Compte du membre désactivé");
-    }
-
-    if (!$request->filled('fund_id')) {
-        return $this->errorResponse("Identifiant de la caisse requis");
-    }
-
-    $fund =funds::find($request['fund_id']);
-    if (!$fund) {
-        return $this->errorResponse("caisse introuvable");
-    } 
-        
-    if (!$fund->isavailable()) {
-        return $this->errorResponse("caisse désactivée!");
-    }
-
-    if(!$fund->canMakeOperation($user)){
-        return $this->errorResponse("Vous n'êtes pas autorisé à effectuer des opérations sur cette caisse.");
-    }
-
-    if(!$fund->haveTheSameMoneyWith($memberAccount->money_id)){
-        return $this->errorResponse("la caisse et le compte n'ont pas la même monnaie.");
-    }
-   
-    DB::beginTransaction();
-    try {
-        // Mise à jour du solde
-        $fees=TransactionFee::calculateFee($amount,$memberAccount->money_id,'withdraw');
-        if(!$fees){
-          return $this->errorResponse("Aucun frais de retrait configuré. Veuillez contacter l'admin Système."); 
+        if (!$accountId) {
+            return $this->errorResponse("Identifiant du Compte introuvable");
         }
 
-        if(($amount+$fees['fee']) > $memberAccount->sold){
-            return $this->errorResponse("Solde du compte membre insuffisant pour effectuer cette opération.");  
+        $memberAccount = wekamemberaccounts::find($accountId);
+
+        if (!$memberAccount) {
+            return $this->errorResponse("Compte du membre introuvable");
         }
 
-        $memberSoldBefore=$memberAccount->sold;
-        $memberAccount->sold = $memberAccount->sold - ($amount+$fees['fee']);
-        $memberSoldAfter=$memberAccount->sold;
-        $memberAccount->save();
-        $transactionMemberAccount =$this->createTransaction(
-            ($amount+$fees['fee']),
-            $memberSoldBefore,
-            $memberSoldAfter,
-            "withdraw",
-            $motif,
-            $user->id,
-            $memberAccount->id,
-            $memberAccount->user_id,
-            null,
-            $request['operation_done_by'] ?? null,
-            $fees['percent'] ?? 0,
-            $request['phone'] ?? null,
-            $request['adresse'] ?? null);
-
-        if($fund->sold<$amount){
-            return $this->errorResponse("Solde de la caisse insuffisant pour effectuer cette opération."); 
+        if (!$memberAccount->isavailable()) {
+            return $this->errorResponse("Compte du membre désactivé");
         }
 
-        $fund->sold=$fund->sold-$amount;
-        $fundSoldBefore=$fund->sold;
-        $fund->save();
-         // Création historique transaction pour la caisse
-        $fundRequestHistory=$this->createLocalRequestHistory(
-            $user->id,
-            $fund->id,
-            $fees['fee'],
-            $motif,
-            'withdraw',
-            null,
-            null,
-            null,
-            $fund->sold,
-            null,
-            $fund->description,
-            $memberAccount->description,
-            null,
-            null,
-            $memberAccount->id,
-            'withdrawal'
-        );
+        if (!$request->filled('fund_id')) {
+            return $this->errorResponse("Identifiant de la caisse requis");
+        }
 
-        $automatiFund =funds::getAutomaticFund($memberAccount->money_id);
-        if (!$automatiFund) {
+        $fund = funds::find($request['fund_id']);
+        if (!$fund) {
+            return $this->errorResponse("caisse introuvable");
+        }
+
+        if (!$fund->isavailable()) {
+            return $this->errorResponse("caisse désactivée!");
+        }
+
+        if (!$fund->canMakeOperation($user)) {
+            return $this->errorResponse("Vous n'êtes pas autorisé à effectuer des opérations sur cette caisse.");
+        }
+
+        if (!$fund->haveTheSameMoneyWith($memberAccount->money_id)) {
+            return $this->errorResponse("la caisse et le compte n'ont pas la même monnaie.");
+        }
+
+        DB::beginTransaction();
+        try {
+            // Mise à jour du solde
+            $fees = TransactionFee::calculateFee($amount, $memberAccount->money_id, 'withdraw');
+            if (!$fees) {
+                return $this->errorResponse("Aucun frais de retrait configuré. Veuillez contacter l'admin Système.");
+            }
+
+            if (($amount + $fees['fee']) > $memberAccount->sold) {
+                return $this->errorResponse("Solde du compte membre insuffisant pour effectuer cette opération.");
+            }
+
+            $memberSoldBefore = $memberAccount->sold;
+            $memberAccount->sold = $memberAccount->sold - ($amount + $fees['fee']);
+            $memberSoldAfter = $memberAccount->sold;
+            $memberAccount->save();
+            $transactionMemberAccount = $this->createTransaction(
+                ($amount + $fees['fee']),
+                $memberSoldBefore,
+                $memberSoldAfter,
+                "withdraw",
+                $motif,
+                $user->id,
+                $memberAccount->id,
+                $memberAccount->user_id,
+                null,
+                $request['operation_done_by'] ?? null,
+                $fees['percent'] ?? 0,
+                $request['phone'] ?? null,
+                $request['adresse'] ?? null
+            );
+
+            if ($fund->sold < $amount) {
+                return $this->errorResponse("Solde de la caisse insuffisant pour effectuer cette opération.");
+            }
+
+            $fund->sold = $fund->sold - $amount;
+            $fundSoldBefore = $fund->sold;
+            $fund->save();
+            // Création historique transaction pour la caisse
+            $fundRequestHistory = $this->createLocalRequestHistory(
+                $user->id,
+                $fund->id,
+                $fees['fee'],
+                $motif,
+                'withdraw',
+                null,
+                null,
+                null,
+                $fund->sold,
+                null,
+                $fund->description,
+                $memberAccount->description,
+                null,
+                null,
+                $memberAccount->id,
+                'withdrawal'
+            );
+
+            $automatiFund = funds::getAutomaticFund($memberAccount->money_id);
+            if (!$automatiFund) {
+                DB::rollBack();
+                return $this->errorResponse("Impossible de terminer l'action. Aucune caisse configurée pour les commissions!");
+            }
+
+            $automatiFund->sold = $automatiFund->sold + $fees['fee'];
+            $automatiFundSold = $automatiFund->sold;
+            $automatiFund->save();
+
+            $AutomaticFundRequest = $this->createLocalRequestHistory(
+                $user->id,
+                $automatiFund->id,
+                $fees['fee'],
+                "Frais de retrait. " . $request['motif'],
+                'withdraw',
+                null,
+                null,
+                null,
+                $automatiFund->sold,
+                null,
+                "WEKA AKIBA SYSTEM",
+                $memberAccount->description,
+                null,
+                null,
+                $memberAccount->id,
+                'approvment'
+            );
+
+            DB::commit();
+            return $this->successResponse("success", $this->show($transactionMemberAccount));
+        } catch (\Exception $e) {
             DB::rollBack();
-            return $this->errorResponse("Impossible de terminer l'action. Aucune caisse configurée pour les commissions!");
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    private function accountToTub(Request $request)
+    {
+        $user = Auth::user();
+        $accountId = $request['member_account_id'] ?? null;
+        $amount = $request['amount'];
+        $motif = $request['motif'];
+
+        if (!$accountId) {
+            return $this->errorResponse("Identifiant du Compte introuvable");
         }
 
-         $automatiFund->sold = $automatiFund->sold+$fees['fee'];
-         $automatiFundSold= $automatiFund->sold;
-         $automatiFund->save();
-        
-         $AutomaticFundRequest=$this->createLocalRequestHistory(
+        $memberAccount = wekamemberaccounts::find($accountId);
+
+        if (!$memberAccount) {
+            return $this->errorResponse("Compte du membre introuvable");
+        }
+
+        if (!$memberAccount->isavailable()) {
+            return $this->errorResponse("Compte du membre désactivé");
+        }
+
+        if (!$request->filled('fund_id')) {
+            return $this->errorResponse("Identifiant de la caisse requis");
+        }
+
+        $fund = funds::find($request['fund_id']);
+        if (!$fund) {
+            return $this->errorResponse("caisse introuvable");
+        }
+
+        if (!$fund->isavailable()) {
+            return $this->errorResponse("caisse désactivée!");
+        }
+
+        if (!$fund->canMakeOperation($user)) {
+            return $this->errorResponse("Vous n'êtes pas autorisé à effectuer des opérations sur cette caisse.");
+        }
+
+        if (!$fund->haveTheSameMoneyWith($memberAccount->money_id)) {
+            return $this->errorResponse("la caisse et le compte n'ont pas la même monnaie.");
+        }
+
+        try {
+            DB::beginTransaction();
+            $fund->sold = $fund->sold + $amount;
+            $fund->save();
+            $makeHistory = $this->createLocalRequestHistory(
+                $user->id,
+                $fund->id,
+                $amount,
+                $motif,
+                'entry',
+                null,
+                null,
+                null,
+                $fund->sold,
+                null,
+                $user->full_name ?? $user->user_name,
+                $fund->description,
+                null,
+                null,
+                $memberAccount->id,
+                'approvment'
+            );
+            $memberAccountSoldBefore = $memberAccount->sold;
+            $memberAccount->sold = $memberAccount->sold + $amount;
+            $memberAccountSoldAfter = $memberAccount->sold;
+            $memberAccount->save();
+            $transaction = $this->createTransaction(
+                $amount,
+                $memberAccountSoldBefore,
+                $memberAccountSoldAfter,
+                "entry",
+                $motif,
+                $user->id,
+                $memberAccount->id,
+                $memberAccount->user_id,
+                null,
+                $user->full_name ? $user->full_name : $user->user_name,
+                0,
+                $user->user_phone ?? null,
+                $user->adress ?? null
+            );
+            DB::commit();
+            return $this->successResponse('success', $this->show($transaction));
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    private function cashToVirtual(Request $request)
+    {
+        $user = Auth::user();
+        $accountId = $request['member_account_id'] ?? null;
+        $amount = $request['amount'];
+        $motif = $request['motif'];
+
+        if (!$accountId) {
+            return $this->errorResponse("Identifiant du Compte introuvable");
+        }
+
+        $memberAccount = wekamemberaccounts::find($accountId);
+
+        if (!$memberAccount) {
+            return $this->errorResponse("Compte du membre introuvable");
+        }
+
+        if (!$memberAccount->isavailable()) {
+            return $this->errorResponse("Compte du membre désactivé");
+        }
+
+        if (!$request->filled('fund_id')) {
+            return $this->errorResponse("Identifiant de la caisse requis");
+        }
+
+        $fund = funds::find($request['fund_id']);
+        if (!$fund) {
+            return $this->errorResponse("caisse introuvable");
+        }
+
+        if (!$fund->isavailable()) {
+            return $this->errorResponse("caisse désactivée!");
+        }
+
+        if (!$fund->canMakeOperation($user)) {
+            return $this->errorResponse("Vous n'êtes pas autorisé à effectuer des opérations sur cette caisse.");
+        }
+
+        if (!$fund->haveTheSameMoneyWith($memberAccount->money_id)) {
+            return $this->errorResponse("la caisse et le compte n'ont pas la même monnaie.");
+        }
+
+        try {
+            DB::beginTransaction();
+            $fund->sold = $fund->sold + $amount;
+            $fund->save();
+            $makeHistory = $this->createLocalRequestHistory(
+                $user->id,
+                $fund->id,
+                $amount,
+                $motif,
+                'entry',
+                null,
+                null,
+                null,
+                $fund->sold,
+                null,
+                $user->full_name ?? $user->user_name,
+                $fund->description,
+                null,
+                null,
+                $memberAccount->id,
+                'approvment'
+            );
+            $memberAccountSoldBefore = $memberAccount->sold;
+            $memberAccount->sold = $memberAccount->sold + $amount;
+            $memberAccountSoldAfter = $memberAccount->sold;
+            $memberAccount->save();
+            $transaction = $this->createTransaction(
+                $amount,
+                $memberAccountSoldBefore,
+                $memberAccountSoldAfter,
+                "entry",
+                $motif,
+                $user->id,
+                $memberAccount->id,
+                $memberAccount->user_id,
+                null,
+                $user->full_name ? $user->full_name : $user->user_name,
+                0,
+                $user->user_phone ?? null,
+                $user->adress ?? null
+            );
+            DB::commit();
+
+            event(new \App\Events\UserRealtimeNotification(
+                $memberAccount->user_id,
+                'Nouveau dépôt',
+                'Vous avez reçu un dépôt de ' . $amount . ' ' . wekamemberaccounts::getMoneyAbreviationByAccountNumber($memberAccount->account_number),
+                'success'
+            ));
+
+            $memberAccountCtrl = new WekamemberaccountsController();
+            event(new \App\Events\MemberAccountUpdated(
+                $memberAccount->user_id,
+                $memberAccountCtrl->show($memberAccount)
+            ));
+
+            event(new \App\Events\TransactionSent(
+                $memberAccount->user_id,
+                $this->show($transaction)
+            ));
+
+            return $this->successResponse('success', $this->show($transaction));
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    private function tubToAccount(Request $request)
+    {
+        $user = Auth::user();
+        $amount = $request['amount'] ?? 0;
+        $accountId = $request['member_account_id'] ?? null;
+        $motif = $request['motif'] ?? '';
+
+        if (!$accountId) {
+            return $this->errorResponse("Identifiant du compte membre requis");
+        }
+        $memberAccount = wekamemberaccounts::find($accountId);
+
+        if (!$memberAccount) {
+            return $this->errorResponse("compte du membre introuvable");   # code...
+        }
+
+        if (!$request->filled('fund_id')) {
+            return $this->errorResponse("Identifiant de la caisse requis");
+        }
+
+        $fund = funds::find($request['fund_id']);
+
+        if (!$fund) {
+            return $this->errorResponse("caisse introuvable");
+        }
+
+        if (!$fund->isavailable()) {
+            return $this->errorResponse("caisse désactivée!");
+        }
+
+        if (!$fund->canMakeOperation($user)) {
+            return $this->errorResponse("Vous n'êtes pas autorisé à effectuer des opérations sur cette caisse.");
+        }
+
+        if (!$fund->haveTheSameMoneyWith($memberAccount->money_id)) {
+            return $this->errorResponse("la caisse et le compte n'ont pas la même monnaie.");
+        }
+
+        if ($amount <= 0) {
+            return $this->errorResponse("Le montant de l'opération doit être supérieur à 0.");
+        }
+
+        if (strlen($motif) <= 2) {
+            return $this->errorResponse("Veuillez fournir le motif svp!");
+        }
+
+        $fund->sold = $fund->sold - $amount;
+        $fund->save();
+        $makeHistory = $this->createLocalRequestHistory(
             $user->id,
-            $automatiFund->id,
-            $fees['fee'],
-            "Frais de retrait. ".$request['motif'],
+            $fund->id,
+            $request['amount'],
+            $request['motif'],
+            'entry',
+            null,
+            null,
+            null,
+            $fund->enterprise_id,
+            $fund->sold,
+            date('Y-m-d'),
+            null,
+            'validated',
+            $user->full_name ?? $user->user_name,
+            $user->full_name ?? $user->user_name,
+            $this->getUuId('RH', 'FH'),
+            null,
+            null,
+            $memberAccount->id,
+            'approvment'
+        );
+
+        $memberAccountsoldbefore = $memberAccount->sold;
+        $memberAccount->sold = $memberAccount->sold + $amount;
+        $memberAccount->save();
+        $memberAccountsoldafter = $memberAccount->sold;
+
+        $memberTransaction = $this->createTransaction(
+            $amount,
+            $memberAccountsoldbefore,
+            $memberAccountsoldafter,
             'withdraw',
-            null,
-            null,
-            null,
-            $automatiFund->sold,
-            null,
-            "WEKA AKIBA SYSTEM",
-            $memberAccount->description,
-            null,
-            null,
-            $memberAccount->id,
-            'approvment'
-        );
-
-        DB::commit();
-        return $this->successResponse("success", $this->show($transactionMemberAccount));
-
-    } catch (\Exception $e) {
-        DB::rollBack();
-        return $this->errorResponse($e->getMessage(), 500);
-    }
-}
-
-private function accountToTub(Request $request){
-    $user=Auth::user();
-    $accountId =$request['member_account_id'] ?? null;
-    $amount=$request['amount'];
-    $motif=$request['motif'];
-
-    if(!$accountId){
-        return $this->errorResponse("Identifiant du Compte introuvable");
-    }
-
-    $memberAccount=wekamemberaccounts::find($accountId);
-
-    if(!$memberAccount){
-        return $this->errorResponse("Compte du membre introuvable");
-    }
-
-    if(!$memberAccount->isavailable()){
-        return $this->errorResponse("Compte du membre désactivé");
-    }
-
-    if (!$request->filled('fund_id')) {
-        return $this->errorResponse("Identifiant de la caisse requis");
-    }
-
-    $fund =funds::find($request['fund_id']);
-    if (!$fund) {
-        return $this->errorResponse("caisse introuvable");
-    } 
-        
-    if (!$fund->isavailable()) {
-        return $this->errorResponse("caisse désactivée!");
-    }
-
-    if(!$fund->canMakeOperation($user)){
-        return $this->errorResponse("Vous n'êtes pas autorisé à effectuer des opérations sur cette caisse.");
-    }
-
-    if(!$fund->haveTheSameMoneyWith($memberAccount->money_id)){
-        return $this->errorResponse("la caisse et le compte n'ont pas la même monnaie.");
-    }
-
-    try{
-        DB::beginTransaction();
-        $fund->sold = $fund->sold + $amount;
-        $fund->save();
-        $makeHistory=$this->createLocalRequestHistory(
-            $user->id,
-            $fund->id,
-            $amount,
-            $motif,
-            'entry',
-            null,
-            null,
-            null,
-            $fund->sold,
-            null,
-            $user->full_name??$user->user_name,
-            $fund->description,
-            null,
-            null,
-            $memberAccount->id,
-            'approvment'
-        );
-        $memberAccountSoldBefore=$memberAccount->sold;
-        $memberAccount->sold=$memberAccount->sold+$amount;
-        $memberAccountSoldAfter=$memberAccount->sold;
-        $memberAccount->save();
-        $transaction=$this->createTransaction(
-            $amount,
-            $memberAccountSoldBefore,
-            $memberAccountSoldAfter,
-            "entry",
             $motif,
             $user->id,
             $memberAccount->id,
             $memberAccount->user_id,
             null,
-            $user->full_name?$user->full_name:$user->user_name,
+            $user->full_name ? $user->full_name : $user->user_name,
             0,
-            $user->user_phone?? null,
-            $user->adress?? null
+            $user->user_phone ?? null,
+            $user->adress ?? null
         );
-        DB::commit();
-        return $this->successResponse('success',$this->show($transaction));
-    }catch (\Exception $e){
-        DB::rollBack();
-        return $this->errorResponse($e->getMessage(), 500);
-    } 
-}
 
-private function cashToVirtual(Request $request){
-    $user=Auth::user();
-    $accountId =$request['member_account_id'] ?? null;
-    $amount=$request['amount'];
-    $motif=$request['motif'];
-
-    if(!$accountId){
-        return $this->errorResponse("Identifiant du Compte introuvable");
-    }
-
-    $memberAccount=wekamemberaccounts::find($accountId);
-
-    if(!$memberAccount){
-        return $this->errorResponse("Compte du membre introuvable");
-    }
-
-    if(!$memberAccount->isavailable()){
-        return $this->errorResponse("Compte du membre désactivé");
-    }
-
-    if (!$request->filled('fund_id')) {
-        return $this->errorResponse("Identifiant de la caisse requis");
-    }
-
-    $fund =funds::find($request['fund_id']);
-    if (!$fund) {
-        return $this->errorResponse("caisse introuvable");
-    } 
-        
-    if (!$fund->isavailable()) {
-        return $this->errorResponse("caisse désactivée!");
-    }
-
-    if(!$fund->canMakeOperation($user)){
-        return $this->errorResponse("Vous n'êtes pas autorisé à effectuer des opérations sur cette caisse.");
-    }
-
-    if(!$fund->haveTheSameMoneyWith($memberAccount->money_id)){
-        return $this->errorResponse("la caisse et le compte n'ont pas la même monnaie.");
-    }
-
-    try{
-        DB::beginTransaction();
-        $fund->sold = $fund->sold + $amount;
-        $fund->save();
-        $makeHistory=$this->createLocalRequestHistory(
-            $user->id,
-            $fund->id,
-            $amount,
-            $motif,
-            'entry',
-            null,
-            null,
-            null,
-            $fund->sold,
-            null,
-            $user->full_name??$user->user_name,
-            $fund->description,
-            null,
-            null,
-            $memberAccount->id,
-            'approvment'
-        );
-        $memberAccountSoldBefore=$memberAccount->sold;
-        $memberAccount->sold=$memberAccount->sold+$amount;
-        $memberAccountSoldAfter=$memberAccount->sold;
-        $memberAccount->save();
-        $transaction=$this->createTransaction(
-            $amount,
-            $memberAccountSoldBefore,
-            $memberAccountSoldAfter,
-            "entry",
-            $motif,
-            $user->id,
-            $memberAccount->id,
-            $memberAccount->user_id,
-            null,
-            $user->full_name?$user->full_name:$user->user_name,
-            0,
-            $user->user_phone?? null,
-            $user->adress?? null
-        );
-        DB::commit();
-
+        /**
+         * Envoi des events à Redis - Node.Js
+         */
         event(new \App\Events\UserRealtimeNotification(
             $memberAccount->user_id,
             'Nouveau dépôt',
-            'Vous avez reçu un dépôt de '.$amount.' '.wekamemberaccounts::getMoneyAbreviationByAccountNumber($memberAccount->account_number),
+            'Vous avez reçu un dépôt de ' . $amount . ' ' . wekamemberaccounts::getMoneyAbreviationByAccountNumber($memberAccount->account_number),
             'success'
-        )); 
-        
-        event(new \App\Events\MemberAccountUpdated(
-            $memberAccount->user_id,
-            $memberAccount
-        )); 
-        
-        event(new \App\Events\TransactionSent(
-            $memberAccount->user_id,
-            $this->show($transaction)
         ));
 
-        return $this->successResponse('success',$this->show($transaction));
-    }catch (\Exception $e){
-        DB::rollBack();
-        return $this->errorResponse($e->getMessage(), 500);
-    } 
-}
+        $memberAccountCtrl = new WekamemberaccountsController();
+        event(new \App\Events\MemberAccountUpdated(
+            $memberAccount->user_id,
+            $memberAccountCtrl->show($memberAccount)
+        ));
 
-private function tubToAccount(Request $request){
-    $user=Auth::user();
-    $amount = $request['amount'] ?? 0;
-    $accountId =$request['member_account_id'] ?? null;
-     $motif = $request['motif'] ?? '';
-    
-    if(!$accountId){
-        return $this->errorResponse("Identifiant du compte membre requis");
-    }
-    $memberAccount=wekamemberaccounts::find($accountId);
-
-    if (!$memberAccount) {
-        return $this->errorResponse("compte du membre introuvable");   # code...
+        event(new \App\Events\TransactionSent(
+            $memberAccount->user_id,
+            $this->show($memberTransaction)
+        ));
+        return $this->successResponse('success', $this->show($makeHistory));
     }
 
-    if (!$request->filled('fund_id')) {
-        return $this->errorResponse("Identifiant de la caisse requis");
+    private function accountToAccount(Request $request)
+    {
+        $user = Auth::user();
+        $accountSource = $request['member_account_id'] ?? null;
+        $accountBeneficiary = $request['beneficiary_account_id'] ?? null;
+        $amount = $request['amount'] ?? 0;
+        $totalAmount = $amount;
+        $motif = $request['motif'] ?? '';
+        $payment = 0;
+
+        if (!$accountSource || $accountSource <= 0) {
+            return $this->errorResponse("Vous devez sélectionner un compte source.");
+        }
+
+        if (!$accountBeneficiary || $accountBeneficiary <= 0) {
+            return $this->errorResponse("Vous devez sélectionner un compte bénéficiaire.");
+        }
+
+        if ($amount <= 0) {
+            return $this->errorResponse("Le montant de l'opération doit être supérieur à 0.");
+        }
+
+        if (strlen($motif) <= 2) {
+            return $this->errorResponse("Veuillez fournir le motif svp!");
+        }
+
+        $sourceMemberAccount = wekamemberaccounts::find($accountSource);
+        if (!$sourceMemberAccount) {
+            return $this->errorResponse("Aucun compte source trouvé");
+        }
+
+        if (!$sourceMemberAccount->isavailable()) {
+            return $this->errorResponse("Action sur le compte source non autorisée.");
+        }
+
+        $beneficiaryMemberAccount = wekamemberaccounts::find($accountBeneficiary);
+        if (!$beneficiaryMemberAccount) {
+            return $this->errorResponse("Aucun compte bénéficiaire trouvé.");
+        }
+
+        if (!$beneficiaryMemberAccount->isavailable()) {
+            return $this->errorResponse("Action sur le compte bénéficiaire non autorisée.");
+        }
+
+        if ($beneficiaryMemberAccount->money_id !== $sourceMemberAccount->money_id) {
+            return $this->errorResponse("Les deux comptes n'utilisent pas la même monnaie.");
+        }
+
+        if ($sourceMemberAccount->sold < $totalAmount) {
+            return $this->errorResponse("Votre solde est insuffisant pour effectuer cette opération.");
+        }
+
+        // if ($user->collector) {
+        //     if(!$user->collection_percentage || $user->collection_percentage<=0){
+        //         return $this->errorResponse("Aucun pourcentage de commission configuré pour le collecteur."); 
+        //     }
+        //     $fees=TransactionFee::calculateFee($amount,$sourceMemberAccount->money_id,'withdraw');
+        //     $payment=($fees['fee']*$user->collection_percentage)/100;
+        //     //introduce sauvegarde des commissions recues ici...
+        // }
+        $sourceSoldBefore = $sourceMemberAccount->sold;
+        $sourceMemberAccount->sold = $sourceMemberAccount->sold - $totalAmount;
+        $sourceSoldAfter = $sourceMemberAccount->sold;
+        $sourceMemberAccount->save();
+        $sourceTransaction = $this->createTransaction(
+            $totalAmount,
+            $sourceSoldBefore,
+            $sourceSoldAfter,
+            "withdraw",
+            $motif,
+            $user->id,
+            $sourceMemberAccount->id,
+            $sourceMemberAccount->user_id,
+            null,
+            $user->full_name ? $user->full_name : $user->user_name,
+            $payment,
+            $user->user_phone ?? null,
+            $user->adress ?? null
+        );
+
+        $beneficiarySoldBefore = $beneficiaryMemberAccount->sold;
+        $beneficiaryMemberAccount->sold = $beneficiaryMemberAccount->sold + $totalAmount;
+        $beneficiarySoldAfter = $beneficiaryMemberAccount->sold;
+        $beneficiaryMemberAccount->save();
+        $this->createTransaction(
+            $totalAmount,
+            $beneficiarySoldBefore,
+            $beneficiarySoldAfter,
+            "entry",
+            $motif,
+            $user->id,
+            $beneficiaryMemberAccount->id,
+            $beneficiaryMemberAccount->user_id,
+            null,
+            $user->full_name ? $user->full_name : $user->user_name,
+            $payment,
+            $user->user_phone ?? null,
+            $user->adress ?? null
+        );
+        return $this->successResponse('success', $this->show($sourceTransaction));
     }
 
-    $fund =funds::find($request['fund_id']);
-
-    if (!$fund) {
-        return $this->errorResponse("caisse introuvable");
-    } 
-        
-    if (!$fund->isavailable()) {
-        return $this->errorResponse("caisse désactivée!");
-    }
-
-    if(!$fund->canMakeOperation($user)){
-        return $this->errorResponse("Vous n'êtes pas autorisé à effectuer des opérations sur cette caisse.");
-    }
-
-    if(!$fund->haveTheSameMoneyWith($memberAccount->money_id)){
-        return $this->errorResponse("la caisse et le compte n'ont pas la même monnaie.");
-    } 
-    
-    if ($amount <= 0) {
-        return $this->errorResponse("Le montant de l'opération doit être supérieur à 0.");
-    }
-     
-    if (strlen($motif) <= 2) {
-        return $this->errorResponse("Veuillez fournir le motif svp!");
-    }
-
-    $fund->sold= $fund->sold - $amount;
-    $fund->save();
-    $makeHistory=$this->createLocalRequestHistory(
-        $user->id,
-        $fund->id,
-        $request['amount'],
-        $request['motif'],
-        'entry',
-        null,
-        null,
-        null,
-        $fund->enterprise_id,
-        $fund->sold,
-        date('Y-m-d'),
-        null,
-        'validated',
-        $user->full_name??$user->user_name,
-        $user->full_name??$user->user_name,
-        $this->getUuId('RH','FH'),
-        null,
-        null,
-        $memberAccount->id,
-        'approvment');
-
-    $memberAccountsoldbefore=$memberAccount->sold;
-    $memberAccount->sold=$memberAccount->sold+$amount;
-    $memberAccount->save();
-    $memberAccountsoldafter=$memberAccount->sold;   
-        
-    $memberTransaction=$this->createTransaction(
-        $amount,
-        $memberAccountsoldbefore,
-        $memberAccountsoldafter,
-        'withdraw',
-        $motif,
-        $user->id,
-        $memberAccount->id,
-        $memberAccount->user_id,
-        null,
-        $user->full_name?$user->full_name:$user->user_name,
-        0,
-        $user->user_phone?? null,
-        $user->adress?? null
-    );
-
-    /**
-     * Envoi des events à Redis - Node.Js
-     */
-    event(new \App\Events\UserRealtimeNotification(
-        $memberAccount->user_id,
-        'Nouveau dépôt',
-        'Vous avez reçu un dépôt de '.$amount.' '.wekamemberaccounts::getMoneyAbreviationByAccountNumber($memberAccount->account_number),
-        'success'
-    )); 
-        
-    event(new \App\Events\MemberAccountUpdated(
-        $memberAccount->user_id,
-        $memberAccount
-    )); 
-        
-    event(new \App\Events\TransactionSent(
-        $memberAccount->user_id,
-        $this->show($memberTransaction)
-    ));
-   return $this->successResponse('success',$this->show($makeHistory));
-}
-
-private function accountToAccount(Request $request){
-    $user=Auth::user();
-    $accountSource=$request['member_account_id'] ?? null;
-    $accountBeneficiary=$request['beneficiary_account_id'] ?? null;
-    $amount = $request['amount'] ?? 0;
-    $totalAmount=$amount;
-    $motif = $request['motif'] ?? '';
-    $payment=0;
-
-    if (!$accountSource || $accountSource <= 0) {
-        return $this->errorResponse("Vous devez sélectionner un compte source.");
-    } 
-    
-    if (!$accountBeneficiary || $accountBeneficiary <= 0) {
-        return $this->errorResponse("Vous devez sélectionner un compte bénéficiaire.");
-    }
-
-    if ($amount <= 0) {
-        return $this->errorResponse("Le montant de l'opération doit être supérieur à 0.");
-    }
-
-    if (strlen($motif) <= 2) {
-        return $this->errorResponse("Veuillez fournir le motif svp!");
-    }
-
-    $sourceMemberAccount = wekamemberaccounts::find($accountSource);
-    if (!$sourceMemberAccount) {
-        return $this->errorResponse("Aucun compte source trouvé");
-    }
-
-    if (!$sourceMemberAccount->isavailable()) {
-        return $this->errorResponse("Action sur le compte source non autorisée.");
-    }
-
-    $beneficiaryMemberAccount = wekamemberaccounts::find($accountBeneficiary);
-    if (!$beneficiaryMemberAccount) {
-        return $this->errorResponse("Aucun compte bénéficiaire trouvé.");
-    }
-
-    if (!$beneficiaryMemberAccount->isavailable()) {
-        return $this->errorResponse("Action sur le compte bénéficiaire non autorisée.");
-    }
-
-    if($beneficiaryMemberAccount->money_id!==$sourceMemberAccount->money_id){
-        return $this->errorResponse("Les deux comptes n'utilisent pas la même monnaie.");
-    }
-
-    if($sourceMemberAccount->sold<$totalAmount){
-        return $this->errorResponse("Votre solde est insuffisant pour effectuer cette opération.");
-    }
-
-    // if ($user->collector) {
-    //     if(!$user->collection_percentage || $user->collection_percentage<=0){
-    //         return $this->errorResponse("Aucun pourcentage de commission configuré pour le collecteur."); 
-    //     }
-    //     $fees=TransactionFee::calculateFee($amount,$sourceMemberAccount->money_id,'withdraw');
-    //     $payment=($fees['fee']*$user->collection_percentage)/100;
-    //     //introduce sauvegarde des commissions recues ici...
-    // }
-   $sourceSoldBefore=$sourceMemberAccount->sold;
-   $sourceMemberAccount->sold = $sourceMemberAccount->sold - $totalAmount;
-   $sourceSoldAfter= $sourceMemberAccount->sold;
-   $sourceMemberAccount->save();
-   $sourceTransaction=$this->createTransaction(
-    $totalAmount,
-    $sourceSoldBefore,
-    $sourceSoldAfter,
-    "withdraw",
-    $motif,
-    $user->id,
-    $sourceMemberAccount->id,
-    $sourceMemberAccount->user_id,
-    null,
-    $user->full_name?$user->full_name:$user->user_name,
-    $payment,
-    $user->user_phone?? null,
-    $user->adress?? null
-   );
-
-   $beneficiarySoldBefore=$beneficiaryMemberAccount->sold;
-   $beneficiaryMemberAccount->sold = $beneficiaryMemberAccount->sold + $totalAmount;
-   $beneficiarySoldAfter=$beneficiaryMemberAccount->sold;
-   $beneficiaryMemberAccount->save();
-    $this->createTransaction(
-    $totalAmount,
-    $beneficiarySoldBefore,
-    $beneficiarySoldAfter,
-    "entry",
-    $motif,
-    $user->id,
-    $beneficiaryMemberAccount->id,
-    $beneficiaryMemberAccount->user_id,
-    null,
-    $user->full_name?$user->full_name:$user->user_name,
-    $payment,
-    $user->user_phone?? null,
-    $user->adress?? null
-   );
-   return $this->successResponse('success',$this->show($sourceTransaction));
-}
-
-    public function sendMoneyAccountToAccountPreview(Request $request)
+    public function sendMoneyAccountToAccountPreview(Request $request, BulkSmsService $sms)
     {
         $user = Auth::user();
         $accountSource = $request['member_account_id'] ?? null;
         $accountBeneficiary = $request['beneficiary_account_id'] ?? null;
         $amount = $request['amount'] ?? 0;
         $motif = $request['motif'] ?? '';
-        $otpChannel = strtolower($request['otp_channel'] ?? '');
+        $otpChannel = "sms";
 
-        if (!in_array($otpChannel, ['sms', 'mail'])) {
-            return $this->errorResponse("Veuillez préciser un canal OTP valide : sms ou mail.");
-        }
+        // if (!in_array($otpChannel, ['sms', 'mail'])) {
+        //     return $this->errorResponse("Veuillez préciser un canal OTP valide : sms ou mail.");
+        // }
 
         // ---- VALIDATIONS ----
-        if (!$accountSource || $accountSource <= 0)
+        if (!$accountSource || $accountSource <= 0) {
             return $this->errorResponse("Vous devez sélectionner un compte source.");
+        }
 
-        if (!$accountBeneficiary || $accountBeneficiary <= 0)
+        if (!$accountBeneficiary || $accountBeneficiary <= 0) {
             return $this->errorResponse("Vous devez sélectionner un compte bénéficiaire.");
+        }
 
-        if ($amount <= 0)
+        if ($amount <= 0) {
             return $this->errorResponse("Le montant doit être supérieur à 0.");
+        }
 
-        if (strlen($motif) <= 2)
+        if (strlen($motif) <= 2) {
             return $this->errorResponse("Veuillez fournir un motif valide.");
+        }
 
         $source = wekamemberaccounts::find($accountSource);
-        if (!$source)
+        if (!$source) {
             return $this->errorResponse("Compte source non trouvé.");
+        }
 
-        if (!$source->isavailable())
+        if (!$source->isavailable()) {
             return $this->errorResponse("Action sur le compte source non autorisée.");
+        }
 
-        if ($source->user_id !== $user->id)
+        if ($source->user_id !== $user->id) {
             return $this->errorResponse("Ce compte ne vous appartient pas.");
+        }
 
-        $beneficiary = wekamemberaccounts::findBy("account_number", $accountBeneficiary);
-        if (!$beneficiary)
+        $beneficiary = DestinationAccountResolver::resolve(
+            $accountBeneficiary,
+            $source->money_id
+        );
+
+        if (!$beneficiary) {
             return $this->errorResponse("Compte bénéficiaire non trouvé.");
+        }
 
-        if (!$beneficiary->isavailable())
+        if (!$beneficiary->isavailable()) {
             return $this->errorResponse("Action sur le compte bénéficiaire non autorisée.");
-
-        if ($beneficiary->money_id !== $source->money_id)
+        }
+        if ($beneficiary->money_id !== $source->money_id) {
             return $this->errorResponse("Les comptes n'utilisent pas la même monnaie.");
-
-        if ($source->sold < $amount)
+        }
+        if ($source->sold < $amount) {
             return $this->errorResponse("Solde insuffisant.");
+        }
 
+        $beneficiaryUser=User::find($beneficiary->user_id);
+        if($user->collector==0 && $beneficiaryUser && $beneficiaryUser->collector==1){
+            return $this->errorResponse("Vous ne pouvez pas envoyer à un collecteur de l'argent!.");
+        }
         // -----------------------
         // 🔐 GÉNÉRATION OTP
         // -----------------------
@@ -2167,51 +2253,33 @@ private function accountToAccount(Request $request){
         ]));
 
         // Sauvegarde 5 min
-       Cache::put("otp_transfer_{$user->id}", [
+        Cache::put("otp_transfer_{$user->id}", [
             "otp" => $otp,
-            "transaction_token" => $transactionToken,
-            "otp_channel" => $otpChannel,   // 🔥 ON STOCKE LE CANAL
+            "transaction_token" => $transactionToken
         ], now()->addMinutes(5));
 
-        // -----------------------
-        // 📬 ENVOI OTP
-        // -----------------------
-        if ($otpChannel === 'sms') {
+        // try {
 
-            try {
-                $twilio = new Client(env('TWILIO_SID'), env('TWILIO_TOKEN'));
-                $twilio->messages->create(
-                    $user->user_phone,
-                    [
-                        "from" => env("TWILIO_FROM"),
-                        "body" => "Votre OTP de confirmation est : $otp"
-                    ]
-                );
-            } catch (\Exception $e) {
-                return $this->errorResponse("Erreur lors de l'envoi du SMS : " . $e->getMessage());
-            }
+        //     OtpQueueHelper::send(
+        //         $user->user_phone,
+        //         $user->collector,
+        //         $user->id,
+        //         $user->email,
+        //         $otp,
+        //         'sms'
+        //     );
 
-        } else {
-
-            try {
-                Mail::raw(
-                    "Votre OTP pour confirmer la transaction est : $otp",
-                    function ($message) use ($user) {
-                        $message->to($user->email)
-                            ->subject("OTP de confirmation");
-                    }
-                );
-            } catch (\Exception $e) {
-                return $this->errorResponse("Erreur lors de l'envoi de l'email : " . $e->getMessage());
-            }
-        }
-        $fees =TransactionFee::calculateFee($amount, $source->money_id, 'send');
+        // } catch (\Exception $e) {
+        //     return $this->errorResponse("Erreur lors de l'envoi de l'OTP : " . $e->getMessage());
+        // }
+       
+        $fees = TransactionFee::calculateFee($amount, $source->money_id, 'send');
         $totalAmount = $amount + $fees['fee'];
         // -----------------------
         // 📄 RÉSUMÉ
         // -----------------------
         $preview = [
-            "otp_channel" => $otpChannel,
+            "otp_code"=>$otp,
             "transaction_token" => $transactionToken,
             "amount" => $amount,
             "fees" => $fees['fee'],
@@ -2221,568 +2289,1556 @@ private function accountToAccount(Request $request){
                 "number" => $source->account_number,
                 "sold_before" => $source->sold,
                 "sold_after" => $source->sold - $amount,
+                "description" => $source->description,
             ],
             "beneficiary_account" => [
                 "number" => $beneficiary->account_number,
                 "sold_before" => $beneficiary->sold,
                 "sold_after" => $beneficiary->sold + $amount,
+                "description" => $beneficiary->description,
             ],
         ];
 
         return $this->successResponse("success", $preview);
     }
 
-   public function sendMoneyAccountToAccount(Request $request)
-{
-    DB::beginTransaction();
-    
-    try {
-
+    public function withdrawalAccountToAccountPreview(Request $request)
+    {
         $user = Auth::user();
-        $otp = $request["otp"] ?? null;
-        $token = $request["transaction_token"] ?? null;
 
-        if (!$otp || !$token)
-            return $this->errorResponse("OTP ou token manquant.");
+        // --------------------------------------------------
+        // 📥 INPUTS
+        // --------------------------------------------------
+        $accountSource       = (int) $request->input('member_account_id');
+        $accountBeneficiary  = $request->input('beneficiary_account_id');
+        $amount              = (float) $request->input('amount', 0);
+        $motif               = trim($request->input('motif', ''));
+        // $otpChannel          = strtolower($request->input('otp_channel', ''));
 
-        // OTP CACHE
-        $cached = Cache::get("otp_transfer_{$user->id}");
-        if (!$cached)
-            return $this->errorResponse("OTP expiré ou non trouvé.");
+        // if (!in_array($otpChannel, ['sms', 'mail'])) {
+        //     return $this->errorResponse("Veuillez préciser un canal OTP valide : sms ou mail.");
+        // }
 
-        if ($cached["otp"] != $otp)
-            return $this->errorResponse("OTP incorrect.");
-
-        if ($cached["transaction_token"] != $token)
-            return $this->errorResponse("Token invalide.");
-
-        // 🔥 Canal OTP (sms / email)
-        $otpChannel = $cached["otp_channel"] ?? "sms";   
-
-        // EXTRACTION TOKEN
-        $data = json_decode(base64_decode($token), true);
-        $accountSource = $data["source"];
-        $accountBeneficiary = $data["beneficiary"];
-        $amount = $data["amount"];
-        $motif = $data["motif"];
-
-        // ----------------------------
-        // VALIDATIONS
-        // ----------------------------
-        $sourceMemberAccount = wekamemberaccounts::find($accountSource);
-        if (!$sourceMemberAccount) { DB::rollBack(); return $this->errorResponse("Aucun compte source trouvé"); }
-
-        if (!$sourceMemberAccount->isavailable()) { DB::rollBack(); return $this->errorResponse("Action sur le compte source non autorisée."); }
-
-        if ($sourceMemberAccount->user_id !== $user->id) { DB::rollBack(); return $this->errorResponse("Le compte n'est pas à vous."); }
-
-        $beneficiaryMemberAccount = wekamemberaccounts::findBy("account_number", $accountBeneficiary);
-        if (!$beneficiaryMemberAccount) { DB::rollBack(); return $this->errorResponse("Aucun compte bénéficiaire trouvé."); }
-
-        if (!$beneficiaryMemberAccount->isavailable()) { DB::rollBack(); return $this->errorResponse("Action sur le compte bénéficiaire non autorisée."); }
-
-        if ($beneficiaryMemberAccount->money_id !== $sourceMemberAccount->money_id) { 
-            DB::rollBack(); 
-            return $this->errorResponse("Les deux comptes n'utilisent pas la même monnaie."); 
+        if ($accountSource <= 0) {
+            return $this->errorResponse("Vous devez sélectionner un compte source.");
         }
 
-        // ----------------------------
-        // FEES
-        // ----------------------------
-        $fees = TransactionFee::calculateFee($amount, $sourceMemberAccount->money_id, 'send');
+        if (!$accountBeneficiary) {
+            return $this->errorResponse("Vous devez sélectionner un compte bénéficiaire.");
+        }
+
+        if ($amount <= 0) {
+            return $this->errorResponse("Le montant doit être supérieur à 0.");
+        }
+
+        if (strlen($motif) < 3) {
+            return $this->errorResponse("Veuillez fournir un motif valide.");
+        }
+
+        // --------------------------------------------------
+        // 🔎 COMPTE SOURCE
+        // --------------------------------------------------
+        $source = wekamemberaccounts::find($accountSource);
+        if (!$source || !$source->isavailable()) {
+            return $this->errorResponse("Compte source invalide ou indisponible.");
+        }
+
+        if ($source->user_id !== $user->id) {
+            return $this->errorResponse("Ce compte source ne vous appartient pas.");
+        }
+
+        // --------------------------------------------------
+        // 🔎 COMPTE BÉNÉFICIAIRE
+        // --------------------------------------------------
+        $beneficiary = DestinationAccountResolver::resolve(
+            $accountBeneficiary,
+            $source->money_id
+        );
+
+
+        if (!$beneficiary || !$beneficiary->isavailable()) {
+            return $this->errorResponse("Compte bénéficiaire invalide ou indisponible.");
+        }
+
+        if ($beneficiary->money_id !== $source->money_id) {
+            return $this->errorResponse("Les comptes doivent utiliser la même monnaie.");
+        }
+
+        if ($beneficiary->user_id === $source->user_id) {
+            return $this->errorResponse(
+                "Vous ne pouvez pas effectuer un retrait vers votre propre compte."
+            );
+        }
+
+        // --------------------------------------------------
+        // 👤 PROPRIÉTAIRES DES COMPTES
+        // --------------------------------------------------
+        $sourceOwner     = User::find($source->user_id);
+        $beneficiaryUser = User::find($beneficiary->user_id);
+
+        if (!$sourceOwner || !$beneficiaryUser) {
+            return $this->errorResponse("Utilisateur source ou bénéficiaire introuvable.");
+        }
+
+        // --------------------------------------------------
+        // 🔐 RÈGLES MÉTIER (IDENTIQUES À LA MÉTHODE FINALE)
+        // --------------------------------------------------
+        if ($sourceOwner->collector === 1) {
+            return $this->errorResponse(
+                "Le compte source doit appartenir à un membre simple."
+            );
+        }
+
+        // return $this->successResponse("success",$beneficiaryUser);
+        if ($beneficiaryUser->collector !== 1) {
+            return $this->errorResponse(
+                "Le retrait ne peut être effectué que vers un collecteur updated." + $beneficiaryUser->collector
+            );
+        }
+
+        // --------------------------------------------------
+        // 💰 FRAIS & SOLDE
+        // --------------------------------------------------
+        $fees = ['fee' => 0];
+        $fees = TransactionFee::calculateFee(
+            $amount,
+            $source->money_id,
+            'send'
+        );
+
         $totalAmount = $amount + $fees['fee'];
 
-        if ($sourceMemberAccount->sold < $totalAmount) {
-            DB::rollBack();
-            return $this->errorResponse("Solde insuffisant pour montant + frais.");
+        if ($source->sold < $totalAmount) {
+            return $this->errorResponse(
+                "Solde insuffisant pour couvrir le montant et les frais."
+            );
         }
 
-        // ----------------------------
-        // AUTOMATIC FUND
-        // ----------------------------
-        $automatiFund = funds::getAutomaticFund($sourceMemberAccount->money_id);
-        if (!$automatiFund) { DB::rollBack(); return $this->errorResponse("Aucune caisse configurée pour les commissions!"); }
+        // --------------------------------------------------
+        // 🔐 GÉNÉRATION OTP & TOKEN
+        // --------------------------------------------------
+        $otp = random_int(100000, 999999);
 
-        // 👉 D'abord ajouter TOUTES les commissions à la caisse
-        $automatiFund->sold += $fees['fee'];
-        $automatiFund->save();
+        $transactionToken = base64_encode(json_encode([
+            'source'       => $source->id,
+            'beneficiary'  => $beneficiary->account_number,
+            'amount'       => $amount,
+            'motif'        => $motif,
+            'user'         => $user->id,
+            'time'         => time(),
+        ]));
 
-        // Historique incluant 100% des frais
-        $this->createLocalRequestHistory(
-            $user->id,
-            $automatiFund->id,
-            $fees['fee'],
-            "Frais de retrait. ".$motif,
-            'entry',
-            null,
-            null,
-            null,
-            $automatiFund->sold,
-            null,
-            "WEKA AKIBA SYSTEM",
-            $sourceMemberAccount->description,
-            null,
-            null,
-            $sourceMemberAccount->id,
-            'approvment'
+        Cache::put(
+            "otp_transfer_{$user->id}",
+            [
+                'otp'               => $otp,
+                'transaction_token' => $transactionToken
+            ],
+            now()->addMinutes(5)
         );
 
 
-        // ----------------------------
-        // DEBIT SOURCE
-        // ----------------------------
-        $sourceSoldBefore = $sourceMemberAccount->sold;
-        $sourceMemberAccount->sold -= $totalAmount;
-        $sourceMemberAccount->save();
-        $sourceSoldAfter = $sourceMemberAccount->sold;
+        // --------------------------------------------------
+        // 📄 PREVIEW
+        // --------------------------------------------------
+        return $this->successResponse("success", [
+            'otp_code'=>$otp,
+            'transaction_token' => $transactionToken,
+            'amount'             => $amount,
+            'fees'               => $fees['fee'],
+            'total_to_debit'     => $totalAmount,
+            'motif'              => $motif,
+            'source_account' => [
+                'number'        => $source->account_number,
+                'sold_before'  => $source->sold,
+                'sold_after'   => $source->sold - $totalAmount,
+                'description' => $source->description,
+            ],
+            'beneficiary_account' => [
+                'number'        => $beneficiary->account_number,
+                'sold_before'  => $beneficiary->sold,
+                'sold_after'   => $beneficiary->sold + $amount,
+                'description' => $beneficiary->description,
+            ],
+        ]);
+    }
 
-        $sourceTransaction = $this->createTransaction(
-            $totalAmount,
-            $sourceSoldBefore,
-            $sourceSoldAfter,
-            "withdraw",
-            $motif,
-            $user->id,
-            $sourceMemberAccount->id,
-            $sourceMemberAccount->user_id,
-            null,
-            $user->full_name ?: $user->user_name,
-            $fees['fee'],
-            $user->user_phone,
-            $user->adress
+
+    public function collectorWithdrawalToMemberPreview(Request $request)
+    {
+        $user = Auth::user();
+
+        // --------------------------------------------------
+        // 📥 INPUTS
+        // --------------------------------------------------
+        $accountSource       = $request->input('member_account_id');
+        $accountBeneficiary  = $request->input('beneficiary_account_id');
+        $amount              = (float) $request->input('amount', 0);
+        $motif               = trim($request->input('motif', ''));
+        $otpChannel          = strtolower($request->input('otp_channel', ''));
+
+        if (!in_array($otpChannel, ['sms', 'mail'])) {
+            return $this->errorResponse("Veuillez préciser un canal OTP valide : sms ou mail.");
+        }
+
+        if (!$accountSource) {
+            return $this->errorResponse("Vous devez sélectionner un compte source.");
+        }
+
+        if (!$accountBeneficiary) {
+            return $this->errorResponse("Vous devez sélectionner un compte bénéficiaire.");
+        }
+
+        if ($amount <= 0) {
+            return $this->errorResponse("Le montant doit être supérieur à 0.");
+        }
+
+        if (strlen($motif) < 3) {
+            return $this->errorResponse("Veuillez fournir un motif valide.");
+        }
+
+        // --------------------------------------------------
+        // 🔎 COMPTE BÉNÉFICIAIRE
+        // --------------------------------------------------
+        $beneficiary = wekamemberaccounts::find($accountBeneficiary);
+        if (!$beneficiary || !$beneficiary->isavailable()) {
+            return $this->errorResponse("Compte bénéficiaire invalide ou indisponible.");
+        }
+        // --------------------------------------------------
+        // 🔎 COMPTE SOURCE
+        // --------------------------------------------------
+        $source = DestinationAccountResolver::resolve(
+            $accountSource,
+            $beneficiary->money_id
         );
 
-        // ----------------------------
-        // CREDIT BENEFICIAIRE
-        // ----------------------------
-        $beneficiarySoldBefore = $beneficiaryMemberAccount->sold;
-        $beneficiaryMemberAccount->sold += $amount;
-        $beneficiaryMemberAccount->save();
-        $beneficiarySoldAfter = $beneficiaryMemberAccount->sold;
+        if (!$source || !$source->isavailable()) {
+            return $this->errorResponse("Compte source invalide ou indisponible.");
+        }
 
-        $beneficiaryTransaction = $this->createTransaction(
+        if ($source->user_id === $user->id) {
+            return $this->errorResponse("Ce compte source ne doit pas vous appartenir");
+        }
+
+        if ($beneficiary->money_id !== $source->money_id) {
+            return $this->errorResponse("Les comptes doivent utiliser la même monnaie.");
+        }
+
+        if ($beneficiary->user_id === $source->user_id) {
+            return $this->errorResponse(
+                "Vous ne pouvez pas effectuer un retrait vers votre propre compte."
+            );
+        }
+
+        // --------------------------------------------------
+        // 👤 PROPRIÉTAIRES DES COMPTES
+        // --------------------------------------------------
+        $sourceOwner     = User::find($source->user_id);
+        $beneficiaryUser = User::find($beneficiary->user_id);
+
+        if (!$sourceOwner || !$beneficiaryUser) {
+            return $this->errorResponse("Utilisateur source ou bénéficiaire introuvable.");
+        }
+
+        // --------------------------------------------------
+        // 🔐 RÈGLES MÉTIER (IDENTIQUES À LA MÉTHODE FINALE)
+        // --------------------------------------------------
+        if ($sourceOwner->collector === 1) {
+            return $this->errorResponse(
+                "Le compte source doit appartenir à un membre simple."
+            );
+        }
+
+        // return $this->successResponse("success",$beneficiaryUser);
+        if ($beneficiaryUser->collector !== 1) {
+            return $this->errorResponse(
+                "Le retrait ne peut être effectué que vers un collecteur updated." + $beneficiaryUser->collector
+            );
+        }
+
+        // --------------------------------------------------
+        // 💰 FRAIS & SOLDE
+        // --------------------------------------------------
+        $fees['fee'] = 0;
+        $fees = TransactionFee::calculateFee(
             $amount,
-            $beneficiarySoldBefore,
-            $beneficiarySoldAfter,
-            "entry",
-            $motif,
-            $user->id,
-            $beneficiaryMemberAccount->id,
-            $beneficiaryMemberAccount->user_id,
-            null,
-            $user->full_name ?: $user->user_name,
-            0,
-            $user->user_phone,
-            $user->adress
+            $source->money_id,
+            'send'
         );
-         // -------------------------------------------------------------
-        // 🔥 🔥 🔥 BONUS DU COLLECTEUR (si applicable)
-        // -------------------------------------------------------------
-        $beneficiaryUser = User::find($beneficiaryMemberAccount->user_id);
-        if ($beneficiaryUser && $beneficiaryUser->collector == true) {
 
-            $percentage = floatval($beneficiaryUser->collection_percentage);
+        $totalAmount = $amount + $fees['fee'];
 
-            if ($percentage > 0) {
+        if ($source->sold < $totalAmount) {
+            return $this->errorResponse(
+                "Solde insuffisant pour couvrir le montant et les frais."
+            );
+        }
 
-                // Bonus du collecteur sur les frais
-                $collectorBonus = ($fees['fee'] * $percentage) / 100;
+        // --------------------------------------------------
+        // 🔐 GÉNÉRATION OTP & TOKEN
+        // --------------------------------------------------
+        $otp = random_int(100000, 999999);
 
-                // Part restante pour la caisse
-                $systemCommission = $fees['fee'] - $collectorBonus;
+        $transactionToken = base64_encode(json_encode([
+            'source'       => $source->id,
+            'beneficiary'  => $beneficiary->account_number,
+            'amount'       => $amount,
+            'motif'        => $motif,
+            'user'         => $user->id,
+            'time'         => time(),
+        ]));
 
-                if ($systemCommission < 0) {
+        Cache::put(
+            "otp_transfer_{$user->id}",
+            [
+                'otp'               => $otp,
+                'transaction_token' => $transactionToken,
+                'otp_channel'       => $otpChannel,
+            ],
+            now()->addMinutes(5)
+        );
+
+        // --------------------------------------------------
+        // 📬 ENVOI OTP
+        // --------------------------------------------------
+        try {
+
+            // --------------------------------------------------
+            // 🔐 DESTINATAIRE OTP = PROPRIÉTAIRE COMPTE SOURCE
+            // --------------------------------------------------
+            $otpRecipient = $sourceOwner;
+
+            if (!$otpRecipient) {
+                return $this->errorResponse(
+                    "Impossible d'identifier le propriétaire du compte source."
+                );
+            }
+
+            OtpQueueHelper::send(
+                $otpRecipient->user_phone,
+                $otpRecipient->collector,
+                $otpRecipient->id,
+                $otpRecipient->email,
+                $otp,
+                'sms'
+            );
+        } catch (\Throwable $e) {
+
+            return $this->errorResponse(
+                "Erreur lors de l'envoi de l'OTP : " . $e->getMessage()
+            );
+        }
+
+
+        event(new \App\Events\UserRealtimeNotification(
+            $sourceOwner->id,
+            'Code OTP',
+            'Un code OTP vous a été envoyé!' . $otpChannel === 'mail' ? ' Vérifiez votre email.' : ' Vérifiez vos SMS.',
+            'success'
+        ));
+
+        event(new \App\Events\UserRealtimeNotification(
+            $beneficiaryUser->id,
+            'Code OTP',
+            'Un code OTP a été envoyé à ' . $sourceOwner->name . ' pour confirmer le retrait.',
+            'success'
+        ));
+
+        // --------------------------------------------------
+        // 📄 PREVIEW
+        // --------------------------------------------------
+        return $this->successResponse("success", [
+            'otp_channel'        => $otpChannel,
+            'transaction_token' => $transactionToken,
+            'amount'             => $amount,
+            'fees'               => $fees['fee'],
+            'total_to_debit'     => $totalAmount,
+            'motif'              => $motif,
+            'source_account' => [
+                'number'        => $source->account_number,
+                'sold_before'  => $source->sold,
+                'sold_after'   => $source->sold - $totalAmount,
+                'description' => $source->description,
+            ],
+            'beneficiary_account' => [
+                'number'        => $beneficiary->account_number,
+                'sold_before'  => $beneficiary->sold,
+                'sold_after'   => $beneficiary->sold + $amount,
+                'description' => $beneficiary->description,
+            ],
+        ]);
+    }
+
+
+    public function sendMoneyAccountToAccount(Request $request)
+    {
+        DB::beginTransaction();
+
+        try {
+
+            $user = Auth::user();
+            $otp = $request["otp"] ?? null;
+            $token = $request["transaction_token"] ?? null;
+
+            if (!$otp || !$token)
+                return $this->errorResponse("OTP ou token manquant.");
+
+            // OTP CACHE
+            $cached = Cache::get("otp_transfer_{$user->id}");
+            if (!$cached)
+                return $this->errorResponse("OTP expiré ou non trouvé.");
+
+            if ($cached["otp"] != $otp)
+                return $this->errorResponse("OTP incorrect.");
+
+            if ($cached["transaction_token"] != $token)
+                return $this->errorResponse("Token invalide.");
+
+            // 🔥 Canal OTP (sms / email)
+            //$otpChannel = $cached["otp_channel"] ?? "sms";
+
+            // EXTRACTION TOKEN
+            $data = json_decode(base64_decode($token), true);
+            $accountSource = $data["source"];
+            $accountBeneficiary = $data["beneficiary"];
+            $amount = $data["amount"];
+            $motif = $data["motif"];
+
+            // ----------------------------
+            // VALIDATIONS
+            // ----------------------------
+            $sourceMemberAccount = wekamemberaccounts::find($accountSource);
+            if (!$sourceMemberAccount) {
+                DB::rollBack();
+                return $this->errorResponse("Aucun compte source trouvé");
+            }
+
+            if (!$sourceMemberAccount->isavailable()) {
+                DB::rollBack();
+                return $this->errorResponse("Action sur le compte source non autorisée.");
+            }
+
+            if ($sourceMemberAccount->user_id !== $user->id) {
+                DB::rollBack();
+                return $this->errorResponse("Le compte n'est pas à vous.");
+            }
+
+            $beneficiaryMemberAccount = DestinationAccountResolver::resolve(
+                $accountBeneficiary,
+                $sourceMemberAccount->money_id
+            );
+
+            if (!$beneficiaryMemberAccount) {
+                DB::rollBack();
+                return $this->errorResponse("Aucun compte bénéficiaire trouvé.");
+            }
+
+
+            if (!$beneficiaryMemberAccount->isavailable()) {
+                DB::rollBack();
+                return $this->errorResponse("Action sur le compte bénéficiaire non autorisée.");
+            }
+
+            if ($beneficiaryMemberAccount->money_id !== $sourceMemberAccount->money_id) {
+                DB::rollBack();
+                return $this->errorResponse("Les deux comptes n'utilisent pas la même monnaie.");
+            }
+
+            if ($beneficiaryMemberAccount->user_id === $sourceMemberAccount->user_id) {
+                DB::rollBack();
+                return $this->errorResponse(
+                    "Vous ne pouvez pas transférer de l'argent vers votre propre compte."
+                );
+            }
+
+            $initiatorIsCollector   = (bool) $user->collector;
+            $beneficiaryUser        = User::find($beneficiaryMemberAccount->user_id);
+            $beneficiaryIsCollector = $beneficiaryUser && $beneficiaryUser->collector;
+
+            // ----------------------------
+            // FEES
+            // ----------------------------
+            $fees = ['fee' => 0];
+            $totalAmount = $amount;
+
+            // 🔴 CAS 2 : non-collecteur → collecteur = INTERDIT
+            if (!$initiatorIsCollector && $beneficiaryIsCollector) {
+                DB::rollBack();
+                return $this->errorResponse(
+                    "Transfert vers un collecteur non autorisé."
+                );
+            }
+
+            // 🟢 CAS 3 : non-collecteur → non-collecteur = FRAIS
+            if (!$initiatorIsCollector && !$beneficiaryIsCollector) {
+                $fees = TransactionFee::calculateFee(
+                    $amount,
+                    $sourceMemberAccount->money_id,
+                    'send'
+                );
+                $totalAmount = $amount + $fees['fee'];
+            }
+
+            if ($sourceMemberAccount->sold < $totalAmount) {
+                DB::rollBack();
+                return $this->errorResponse("Solde insuffisant pour montant + frais.");
+            }
+
+            // ----------------------------
+            // AUTOMATIC FUND
+            // ----------------------------
+            if ($fees['fee'] > 0) {
+                $automatiFund = funds::getAutomaticFund($sourceMemberAccount->money_id);
+                if (!$automatiFund) {
                     DB::rollBack();
-                    return $this->errorResponse("Erreur: commission collecteur > frais.");
+                    return $this->errorResponse(
+                        "Aucune caisse configurée pour les commissions."
+                    );
                 }
 
-                // Corriger le solde de la caisse
-                $automatiFund->sold -= $collectorBonus; // retirer la part collecteur
+                $automatiFund->sold += $fees['fee'];
                 $automatiFund->save();
 
-                // Création du bonus dans AgentBonus
-                app(\App\Services\BonusService::class)->createBonus(
-                    $beneficiaryUser->id,
-                    $sourceTransaction,
-                    $collectorBonus,
-                    $beneficiaryMemberAccount->account_number,
-                    "Bonus collecteur ($percentage%) sur les frais."
+                $this->createLocalRequestHistory(
+                    $user->id,
+                    $automatiFund->id,
+                    $fees['fee'],
+                    "Frais de transfert. " . $motif,
+                    'entry',
+                    null,
+                    null,
+                    null,
+                    $automatiFund->sold,
+                    null,
+                    "WEKA AKIBA SYSTEM",
+                    $sourceMemberAccount->description,
+                    null,
+                    null,
+                    $sourceMemberAccount->id,
+                    'approvment'
                 );
-                //ajouter un event real time pour le bonus recus
             }
-        }
-        // -------------------------------------------------------------
-        // FIN BONUS COLLECTEUR
-        // -------------------------------------------------------------
+
+            // ----------------------------
+            // DEBIT SOURCE
+            // ----------------------------
+            $sourceSoldBefore = $sourceMemberAccount->sold;
+            $sourceMemberAccount->sold -= $totalAmount;
+            $sourceMemberAccount->save();
+            $sourceSoldAfter = $sourceMemberAccount->sold;
+
+            $sourceTransaction = $this->createTransaction(
+                $totalAmount,
+                $sourceSoldBefore,
+                $sourceSoldAfter,
+                "withdraw",
+                $motif,
+                $user->id,
+                $sourceMemberAccount->id,
+                $sourceMemberAccount->user_id,
+                null,
+                $user->full_name ?: $user->user_name,
+                $fees['fee'],
+                $user->user_phone,
+                $user->adress
+            );
+
+            // ----------------------------
+            // CREDIT BENEFICIAIRE
+            // ----------------------------
+            $beneficiarySoldBefore = $beneficiaryMemberAccount->sold;
+            $beneficiaryMemberAccount->sold += $amount;
+            $beneficiaryMemberAccount->save();
+            $beneficiarySoldAfter = $beneficiaryMemberAccount->sold;
+
+            $beneficiaryTransaction = $this->createTransaction(
+                $amount,
+                $beneficiarySoldBefore,
+                $beneficiarySoldAfter,
+                "entry",
+                $motif,
+                $user->id,
+                $beneficiaryMemberAccount->id,
+                $beneficiaryMemberAccount->user_id,
+                null,
+                $user->full_name ?: $user->user_name,
+                0,
+                $user->user_phone,
+                $user->adress
+            );
+            // -------------------------------------------------------------
+            // 🔥 🔥 🔥 BONUS DU COLLECTEUR (si applicable)
+            // -------------------------------------------------------------
+            $beneficiaryUser = User::find($beneficiaryMemberAccount->user_id);
+            if (!$user->collector === 1) {
+                if ($beneficiaryUser && $beneficiaryUser->collector == true) {
+
+                    $percentage = floatval($beneficiaryUser->collection_percentage);
+
+                    if ($percentage > 0) {
+
+                        // Bonus du collecteur sur les frais
+                        $collectorBonus = ($fees['fee'] * $percentage) / 100;
+
+                        // Part restante pour la caisse
+                        $systemCommission = $fees['fee'] - $collectorBonus;
+
+                        if ($systemCommission < 0) {
+                            DB::rollBack();
+                            return $this->errorResponse("Erreur: commission collecteur > frais.");
+                        }
+
+                        // Corriger le solde de la caisse
+                        $automatiFund->sold -= $collectorBonus; // retirer la part collecteur
+                        $automatiFund->save();
+
+                        // Création du bonus dans AgentBonus
+                        app(\App\Services\BonusService::class)->createBonus(
+                            $beneficiaryUser->id,
+                            $sourceTransaction,
+                            $collectorBonus,
+                            $beneficiaryMemberAccount->account_number,
+                            "Bonus collecteur ($percentage%) sur les frais."
+                        );
+                        //ajouter un event real time pour le bonus recus
+                    }
+                }
+            }
+
+            // -------------------------------------------------------------
+            // FIN BONUS COLLECTEUR
+            // -------------------------------------------------------------
 
 
-        // ----------------------------
-        // CLEAN OTP
-        // ----------------------------
-        Cache::forget("otp_transfer_{$user->id}");
+            // ----------------------------
+            // CLEAN OTP
+            // ----------------------------
+            Cache::forget("otp_transfer_{$user->id}");
 
-        // ----------------------------
-        // COMMIT
-        // ----------------------------
-        DB::commit();
-
-        // -----------------------------------------------------------
-        // NOTIFICATIONS
-        // -----------------------------------------------------------
-        $this->sendFinalNotifications(
-            $otpChannel,
-            $user,
-            $sourceTransaction,
-            $sourceSoldAfter,
-            $beneficiaryMemberAccount,
-            $beneficiaryTransaction,
-            $beneficiarySoldAfter,
-            $fees['fee'],
-            $amount,
-            $sourceMemberAccount->account_number,
-            $beneficiaryMemberAccount->account_number
-        );
-        /**
-         * Envoi des events à Redis - Node.Js
-         */
-        event(new \App\Events\UserRealtimeNotification(
+            // ----------------------------
+            // COMMIT
+            // ----------------------------
+            DB::commit();
+            
+            /**
+             * Envoi des events à Redis - Node.Js
+             */
+            event(new \App\Events\UserRealtimeNotification(
                 $beneficiaryUser->id,
                 'Nouveau dépôt',
-                'Vous avez reçu un dépôt de '.$amount.' '.wekamemberaccounts::getMoneyAbreviationByAccountNumber($beneficiaryMemberAccount->account_number),
+                'Vous avez reçu un dépôt de ' . $amount . ' ' . wekamemberaccounts::getMoneyAbreviationByAccountNumber($beneficiaryMemberAccount->account_number),
                 'success'
-        )); 
-        
-        event(new \App\Events\MemberAccountUpdated(
-            $beneficiaryUser->id,
-            $beneficiaryMemberAccount
-        )); 
-        
-        event(new \App\Events\TransactionSent(
-            $beneficiaryUser->id,
-            $this->show($beneficiaryTransaction)
-        ));
-        
-        event(new \App\Events\TransactionSent(
-            $sourceMemberAccount->user_id,
-            $this->show($sourceTransaction)
-        ));
-        
-        return $this->successResponse("success", $this->show($sourceTransaction));
+            ));
 
-    } catch (\Throwable $e) {
-        DB::rollBack();
-        return $this->errorResponse("Erreur interne : " . $e->getMessage());
+            $memberAccountCtrl = new WekamemberaccountsController();
+            event(new \App\Events\MemberAccountUpdated(
+                $beneficiaryUser->id,
+                $memberAccountCtrl->show($beneficiaryMemberAccount)
+            ));
+
+            event(new \App\Events\MemberAccountUpdated(
+                $user->id,
+                $memberAccountCtrl->show($sourceMemberAccount)
+            ));
+
+            event(new \App\Events\TransactionSent(
+                $beneficiaryUser->id,
+                $this->show($beneficiaryTransaction)
+            ));
+
+            event(new \App\Events\TransactionSent(
+                $sourceMemberAccount->user_id,
+                $this->show($sourceTransaction)
+            ));
+
+            // -----------------------------------------------------------
+            // NOTIFICATIONS
+            // -----------------------------------------------------------
+            $this->sendFinalNotifications(
+                "email",
+                $user,
+                $sourceTransaction,
+                $sourceSoldAfter,
+                $beneficiaryMemberAccount,
+                $beneficiaryTransaction,
+                $beneficiarySoldAfter,
+                $fees['fee'],
+                $amount,
+                $sourceMemberAccount->account_number,
+                $beneficiaryMemberAccount->account_number
+            );
+
+            return $this->successResponse("success", $this->show($sourceTransaction));
+        } catch (\Throwable $e) {
+            Log::error("error attemp log null", [
+                "message" => $e
+            ]);
+            DB::rollBack();
+            return $this->errorResponse("Erreur interne 1 : " . $e->getMessage());
+        }
     }
-}
+
+    public function withdrawAccountToAccount(Request $request)
+    {
+        DB::beginTransaction();
+
+        try {
+            $user = Auth::user();
+
+            // --------------------------------------------------
+            // 🔐 OTP & TOKEN
+            // --------------------------------------------------
+            $otp   = $request->input('otp');
+            $token = $request->input('transaction_token');
+
+            if (!$otp || !$token) {
+                return $this->errorResponse("OTP ou token manquant.");
+            }
+
+            $cached = Cache::get("otp_transfer_{$user->id}");
+            if (!$cached) {
+                return $this->errorResponse("OTP expiré ou non trouvé.");
+            }
+
+            if ((string) $cached['otp'] !== (string) $otp) {
+                return $this->errorResponse("OTP incorrect.");
+            }
+
+            if ($cached['transaction_token'] !== $token) {
+                return $this->errorResponse("Token invalide.");
+            }
+
+            // $otpChannel = $cached['otp_channel'] ?? 'sms';
+
+            // --------------------------------------------------
+            // 📦 EXTRACTION DONNÉES TRANSACTION
+            // --------------------------------------------------
+            $data = json_decode(base64_decode($token), true);
+
+            $accountSource       = $data['source'];
+            $accountBeneficiary  = $data['beneficiary'];
+            $amount              = (float) $data['amount'];
+            $motif               = $data['motif'];
+
+            // --------------------------------------------------
+            // 🔎 COMPTES
+            // --------------------------------------------------
+            $sourceAccount = wekamemberaccounts::find($accountSource);
+            if (!$sourceAccount || !$sourceAccount->isavailable()) {
+                DB::rollBack();
+                return $this->errorResponse("Compte source invalide ou indisponible.");
+            }
+
+            if ($sourceAccount->user_id !== $user->id) {
+                DB::rollBack();
+                return $this->errorResponse("Le compte source ne vous appartient pas.");
+            }
+
+            $beneficiaryAccount = DestinationAccountResolver::resolve(
+                $accountBeneficiary,
+                $sourceAccount->money_id
+            );
+
+            if (!$beneficiaryAccount || !$beneficiaryAccount->isavailable()) {
+                DB::rollBack();
+                return $this->errorResponse("Compte bénéficiaire invalide ou indisponible.");
+            }
+
+            if ($beneficiaryAccount->money_id !== $sourceAccount->money_id) {
+                DB::rollBack();
+                return $this->errorResponse("Les comptes doivent utiliser la même monnaie.");
+            }
+
+            if ($beneficiaryAccount->user_id === $sourceAccount->user_id) {
+                DB::rollBack();
+                return $this->errorResponse("Impossible d’effectuer un retrait vers votre propre compte.");
+            }
+
+            // --------------------------------------------------
+            // 👤 PROPRIÉTAIRES DES COMPTES
+            // --------------------------------------------------
+            $sourceOwner      = User::find($sourceAccount->user_id);
+            $beneficiaryUser  = User::find($beneficiaryAccount->user_id);
+
+            if (!$sourceOwner || !$beneficiaryUser) {
+                DB::rollBack();
+                return $this->errorResponse("Utilisateur source ou bénéficiaire introuvable.");
+            }
+
+            // 🔐 RÈGLES MÉTIER FINALES
+            if ($sourceOwner->collector === 1) {
+                DB::rollBack();
+                return $this->errorResponse(
+                    "Le compte source doit appartenir à un membre simple."
+                );
+            }
+
+            if ($beneficiaryUser->collector !== 1) {
+                DB::rollBack();
+                return $this->errorResponse(
+                    "Le retrait ne peut être effectué que vers un collecteur"
+                );
+            }
+
+            // --------------------------------------------------
+            // 💰 FRAIS & SOLDE
+            // --------------------------------------------------
+            $fees = ['fee' => 0];
+            $totalAmount = $amount;
+
+            // Frais applicables uniquement pour membre → collecteur
+            $fees = TransactionFee::calculateFee(
+                $amount,
+                $sourceAccount->money_id,
+                'send'
+            );
+            $totalAmount += $fees['fee'];
+
+            if ($sourceAccount->sold < $totalAmount) {
+                DB::rollBack();
+                return $this->errorResponse("Solde insuffisant (montant + frais).");
+            }
+
+            // --------------------------------------------------
+            // 🏦 CAISSE AUTOMATIQUE (COMMISSIONS)
+            // --------------------------------------------------
+            $automatiFund = null;
+            if ($fees['fee'] > 0) {
+                $automatiFund = funds::getAutomaticFund($sourceAccount->money_id);
+                if (!$automatiFund) {
+                    DB::rollBack();
+                    return $this->errorResponse("Aucune caisse configurée pour les commissions.");
+                }
+
+                $automatiFund->sold += $fees['fee'];
+                $automatiFund->save();
+            }
+
+            // --------------------------------------------------
+            // 🔻 DÉBIT SOURCE
+            // --------------------------------------------------
+            $sourceSoldBefore = $sourceAccount->sold;
+            $sourceAccount->sold -= $totalAmount;
+            $sourceAccount->save();
+
+            $sourceTransaction = $this->createTransaction(
+                $totalAmount,
+                $sourceSoldBefore,
+                $sourceAccount->sold,
+                'withdraw',
+                $motif,
+                $user->id,
+                $sourceAccount->id,
+                $sourceAccount->user_id,
+                null,
+                $user->full_name ?: $user->user_name,
+                $fees['fee'],
+                $user->user_phone,
+                $user->adress,
+                'validated',                     // ✅ status explicite
+                null,                            // from_to_id
+                $beneficiaryAccount->user_id    // sent_to_id
+            );
 
 
-private function sendFinalNotifications(
-    $otpChannel,
-    $sourceUser,
-    $sourceTransaction,
-    $sourceSoldAfter,
-    $beneficiaryAccount,
-    $beneficiaryTransaction,
-    $beneficiarySoldAfter,
-    $fees,
-    $amount,
-    $sourceAccountNumber,
-    $beneficiaryAccountNumber
-) {
-    $beneficiaryUser =User::find($beneficiaryAccount->user_id);
+            // --------------------------------------------------
+            // 🔺 CRÉDIT BÉNÉFICIAIRE
+            // --------------------------------------------------
+            $beneficiarySoldBefore = $beneficiaryAccount->sold;
+            $beneficiaryAccount->sold += $amount;
+            $beneficiaryAccount->save();
 
-    if ($otpChannel === "sms") {
+            $beneficiaryTransaction = $this->createTransaction(
+                $amount,
+                $beneficiarySoldBefore,
+                $beneficiaryAccount->sold,
+                'entry',
+                $motif,
+                $user->id,
+                $beneficiaryAccount->id,
+                $beneficiaryAccount->user_id,
+                null,
+                $user->full_name ?: $user->user_name,
+                0,
+                $user->user_phone,
+                $user->adress,
+                'validated',                  // ✅ status
+                $sourceAccount->user_id,      // from_to_id
+                null                           // sent_to_id
+            );
 
-        // 🔥 SMS Source
-        $smsSource =
-        "WEKA AKIBA\n".
-        "Transaction ID : {$sourceTransaction->uuid}\n".
-        "Retrait : {$amount}\n".
-        "Frais : {$fees}\n".
-        "Total débité : ".($amount+$fees)."\n".
-        "Solde restant : {$sourceSoldAfter}\n";
 
-        $this->sendSms($sourceUser->user_phone, $smsSource);
+            // --------------------------------------------------
+            // 🎁 BONUS COLLECTEUR
+            // --------------------------------------------------
+            if ($fees['fee'] > 0 && $beneficiaryUser->collector) {
+                $percentage = (float) $beneficiaryUser->collection_percentage;
+                if ($percentage > 0) {
+                    $collectorBonus = ($fees['fee'] * $percentage) / 100;
 
-        // 🔥 SMS Bénéficiaire
-        $smsBenef =
-        "WEKA AKIBA\n".
-        "Transaction ID : {$beneficiaryTransaction->uuid}\n".
-        "Dépôt reçu : {$amount}\n".
-        "Solde disponible : {$beneficiarySoldAfter}\n";
+                    if ($collectorBonus > 0) {
+                        $automatiFund->sold -= $collectorBonus;
+                        $automatiFund->save();
 
-        $this->sendSms($beneficiaryUser->user_phone, $smsBenef);
+                        app(\App\Services\BonusService::class)->createBonus(
+                            $beneficiaryUser->id,
+                            $sourceTransaction,
+                            $collectorBonus,
+                            $beneficiaryAccount->account_number,
+                            "Bonus collecteur ({$percentage}%)."
+                        );
+                    }
+                }
+            }
 
-    } else {
+            // --------------------------------------------------
+            // 🧹 CLEANUP & COMMIT
+            // --------------------------------------------------
+            Cache::forget("otp_transfer_{$user->id}");
+            DB::commit();
 
-        // 🔥 EMAIL SOURCE
-        $this->sendTransactionEmail(
-            $sourceUser,
-            "Notification de Retrait",
-            "Retrait effectué sur votre compte.",
-            $sourceTransaction,
-            $fees,
-            $sourceTransaction->sold_before,
-            $sourceSoldAfter,
-            $sourceAccountNumber,
-            $beneficiaryAccountNumber
-        );
+            // --------------------------------------------------
+            // 🔔 NOTIFICATIONS & EVENTS
 
-        // 🔥 EMAIL BÉNÉFICIAIRE
-        $this->sendTransactionEmail(
-            $beneficiaryUser,
-            "Notification de Dépôt",
-            "Vous avez reçu un dépôt sur votre compte.",
-            $beneficiaryTransaction,
-            0,
-            $beneficiaryTransaction->sold_before,
-            $beneficiarySoldAfter,
-            $sourceAccountNumber,
-            $beneficiaryAccountNumber
-        );
+
+            $this->sendFinalNotifications(
+                "email",
+                $user,
+                $sourceTransaction,
+                $sourceAccount->sold,
+                $beneficiaryAccount,
+                $beneficiaryTransaction,
+                $beneficiaryAccount->sold,
+                $fees['fee'],
+                $amount,
+                $sourceAccount->account_number,
+                $beneficiaryAccount->account_number
+            );
+
+            $memberAccountCtrl = new WekamemberaccountsController();
+            event(new \App\Events\MemberAccountUpdated(
+                $beneficiaryUser->id,
+                $memberAccountCtrl->show($beneficiaryAccount)
+            ));
+
+            event(new \App\Events\MemberAccountUpdated(
+                $user->id,
+                $memberAccountCtrl->show($sourceAccount)
+            ));
+
+            event(new \App\Events\TransactionSent(
+                $beneficiaryUser->id,
+                $this->show($beneficiaryTransaction)
+            ));
+            
+            event(new \App\Events\TransactionSent(
+                $sourceAccount->user_id,
+                $this->show($sourceTransaction)
+            ));
+
+            event(new \App\Events\UserRealtimeNotification(
+                $beneficiaryUser->id,
+                'Nouveau dépôt',
+                'Vous avez reçu un dépôt de ' . $amount . ' ' .
+                    wekamemberaccounts::getMoneyAbreviationByAccountNumber(
+                        $beneficiaryAccount->account_number
+                    ),
+                'success'
+            ));
+
+            return $this->successResponse("success", $this->show($sourceTransaction));
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return $this->errorResponse("Erreur interne 2: " . $e->getMessage());
+        }
     }
+
+    public function validateCollectorClientWithdraw(Request $request)
+    {
+        DB::beginTransaction();
+
+        try {
+            $user = Auth::user();
+
+            // --------------------------------------------------
+            // 🔐 OTP & TOKEN
+            // --------------------------------------------------
+            $otp   = $request->input('otp');
+            $token = $request->input('transaction_token');
+
+            if (!$otp || !$token) {
+                return $this->errorResponse("OTP ou token manquant.");
+            }
+
+            $cached = Cache::get("otp_transfer_{$user->id}");
+            if (!$cached) {
+                return $this->errorResponse("OTP expiré ou non trouvé.");
+            }
+
+            if ((string) $cached['otp'] !== (string) $otp) {
+                return $this->errorResponse("OTP incorrect.");
+            }
+
+            if ($cached['transaction_token'] !== $token) {
+                return $this->errorResponse("Token invalide.");
+            }
+
+            $otpChannel = $cached['otp_channel'] ?? 'sms';
+
+            // --------------------------------------------------
+            // 📦 EXTRACTION DONNÉES TRANSACTION
+            // --------------------------------------------------
+            $data = json_decode(base64_decode($token), true);
+
+            $accountSource       = $data['source'];
+            $accountBeneficiary  = $data['beneficiary'];
+            $amount              = (float) $data['amount'];
+            $motif               = $data['motif'];
+
+            // --------------------------------------------------
+            // 🔎 COMPTES
+            // --------------------------------------------------
+            $sourceAccount = wekamemberaccounts::find($accountSource);
+            if (!$sourceAccount || !$sourceAccount->isavailable()) {
+                DB::rollBack();
+                return $this->errorResponse("Compte source invalide ou indisponible.");
+            }
+
+            if ($sourceAccount->user_id === $user->id) {
+                DB::rollBack();
+                return $this->errorResponse("Le compte source ne doit pas vous appartenir.");
+            }
+
+            $beneficiaryAccount = DestinationAccountResolver::resolve(
+                $accountBeneficiary,
+                $sourceAccount->money_id
+            );
+
+            if (!$beneficiaryAccount || !$beneficiaryAccount->isavailable()) {
+                DB::rollBack();
+                return $this->errorResponse("Compte bénéficiaire invalide ou indisponible.");
+            }
+
+            if ($beneficiaryAccount->money_id !== $sourceAccount->money_id) {
+                DB::rollBack();
+                return $this->errorResponse("Les comptes doivent utiliser la même monnaie.");
+            }
+
+            if ($beneficiaryAccount->user_id === $sourceAccount->user_id) {
+                DB::rollBack();
+                return $this->errorResponse("Impossible d’effectuer un retrait vers votre propre compte.");
+            }
+
+            // --------------------------------------------------
+            // 👤 PROPRIÉTAIRES DES COMPTES
+            // --------------------------------------------------
+            $sourceOwner      = User::find($sourceAccount->user_id);
+            $beneficiaryUser  = User::find($beneficiaryAccount->user_id);
+
+            if (!$sourceOwner || !$beneficiaryUser) {
+                DB::rollBack();
+                return $this->errorResponse("Utilisateur source ou bénéficiaire introuvable.");
+            }
+
+            // 🔐 RÈGLES MÉTIER FINALES
+            if ($sourceOwner->collector === 1) {
+                DB::rollBack();
+                return $this->errorResponse(
+                    "Le compte source doit appartenir à un membre simple."
+                );
+            }
+
+            if ($beneficiaryUser->collector !== 1) {
+                DB::rollBack();
+                return $this->errorResponse(
+                    "Le retrait ne peut être effectué que vers un collecteur"
+                );
+            }
+
+            // --------------------------------------------------
+            // 💰 FRAIS & SOLDE
+            // --------------------------------------------------
+            $fees = ['fee' => 0];
+            $totalAmount = $amount;
+
+            // Frais applicables uniquement pour membre → collecteur
+            $fees = TransactionFee::calculateFee(
+                $amount,
+                $sourceAccount->money_id,
+                'send'
+            );
+            $totalAmount += $fees['fee'];
+
+            if ($sourceAccount->sold < $totalAmount) {
+                DB::rollBack();
+                return $this->errorResponse("Solde insuffisant (montant + frais).");
+            }
+
+            // --------------------------------------------------
+            // 🏦 CAISSE AUTOMATIQUE (COMMISSIONS)
+            // --------------------------------------------------
+            $automatiFund = null;
+            if ($fees['fee'] > 0) {
+                $automatiFund = funds::getAutomaticFund($sourceAccount->money_id);
+                if (!$automatiFund) {
+                    DB::rollBack();
+                    return $this->errorResponse("Aucune caisse configurée pour les commissions.");
+                }
+
+                $automatiFund->sold += $fees['fee'];
+                $automatiFund->save();
+            }
+
+            // --------------------------------------------------
+            // 🔻 DÉBIT SOURCE
+            // --------------------------------------------------
+            $sourceSoldBefore = $sourceAccount->sold;
+            $sourceAccount->sold -= $totalAmount;
+            $sourceAccount->save();
+
+            $sourceTransaction = $this->createTransaction(
+                $totalAmount,
+                $sourceSoldBefore,
+                $sourceAccount->sold,
+                'withdraw',
+                $motif,
+                $user->id,
+                $sourceAccount->id,
+                $sourceAccount->user_id,
+                null,
+                $user->full_name ?: $user->user_name,
+                $fees['fee'],
+                $user->user_phone,
+                $user->adress,
+                'validated',                     // ✅ status explicite
+                null,                            // from_to_id
+                $beneficiaryAccount->user_id    // sent_to_id
+            );
+
+
+            // --------------------------------------------------
+            // 🔺 CRÉDIT BÉNÉFICIAIRE
+            // --------------------------------------------------
+            $beneficiarySoldBefore = $beneficiaryAccount->sold;
+            $beneficiaryAccount->sold += $amount;
+            $beneficiaryAccount->save();
+
+            $beneficiaryTransaction = $this->createTransaction(
+                $amount,
+                $beneficiarySoldBefore,
+                $beneficiaryAccount->sold,
+                'entry',
+                $motif,
+                $user->id,
+                $beneficiaryAccount->id,
+                $beneficiaryAccount->user_id,
+                null,
+                $user->full_name ?: $user->user_name,
+                0,
+                $user->user_phone,
+                $user->adress,
+                'validated',                  // ✅ status
+                $sourceAccount->user_id,      // from_to_id
+                null                           // sent_to_id
+            );
+
+
+            // --------------------------------------------------
+            // 🎁 BONUS COLLECTEUR
+            // --------------------------------------------------
+            if ($fees['fee'] > 0 && $beneficiaryUser->collector) {
+                $percentage = (float) $beneficiaryUser->collection_percentage;
+                if ($percentage > 0) {
+                    $collectorBonus = ($fees['fee'] * $percentage) / 100;
+
+                    if ($collectorBonus > 0) {
+                        $automatiFund->sold -= $collectorBonus;
+                        $automatiFund->save();
+
+                        app(\App\Services\BonusService::class)->createBonus(
+                            $beneficiaryUser->id,
+                            $sourceTransaction,
+                            $collectorBonus,
+                            $beneficiaryAccount->account_number,
+                            "Bonus collecteur ({$percentage}%)."
+                        );
+                    }
+                }
+            }
+
+            // --------------------------------------------------
+            // 🧹 CLEANUP & COMMIT
+            // --------------------------------------------------
+            Cache::forget("otp_transfer_{$user->id}");
+            DB::commit();
+
+            // --------------------------------------------------
+            // 🔔 NOTIFICATIONS & EVENTS
+
+
+            $this->sendFinalNotifications(
+                $otpChannel,
+                $user,
+                $sourceTransaction,
+                $sourceAccount->sold,
+                $beneficiaryAccount,
+                $beneficiaryTransaction,
+                $beneficiaryAccount->sold,
+                $fees['fee'],
+                $amount,
+                $sourceAccount->account_number,
+                $beneficiaryAccount->account_number
+            );
+
+            event(new \App\Events\UserRealtimeNotification(
+                $beneficiaryUser->id,
+                'Nouveau dépôt',
+                'Vous avez reçu un dépôt de ' . $amount . ' ' .
+                    wekamemberaccounts::getMoneyAbreviationByAccountNumber(
+                        $beneficiaryAccount->account_number
+                    ),
+                'success'
+            ));
+
+            $memberAccountCtrl = new WekamemberaccountsController();
+            event(new \App\Events\MemberAccountUpdated(
+                $beneficiaryUser->id,
+                $memberAccountCtrl->show($beneficiaryAccount)
+            ));
+            event(new \App\Events\MemberAccountUpdated(
+                $user->id,
+                $memberAccountCtrl->show($sourceAccount)
+            ));
+
+            event(new \App\Events\TransactionSent(
+                $beneficiaryUser->id,
+                $this->show($beneficiaryTransaction)
+            ));
+            event(new \App\Events\TransactionSent(
+                $sourceAccount->user_id,
+                $this->show($sourceTransaction)
+            ));
+
+            return $this->successResponse("success", $this->show($sourceTransaction));
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return $this->errorResponse("Erreur interne 3: " . $e->getMessage());
+        }
+    }
+
+    private function sendFinalNotifications(
+        $otpChannel,
+        $sourceUser,
+        $sourceTransaction,
+        $sourceSoldAfter,
+        $beneficiaryAccount,
+        $beneficiaryTransaction,
+        $beneficiarySoldAfter,
+        $fees,
+        $amount,
+        $sourceAccountNumber,
+        $beneficiaryAccountNumber
+    ) {
+        $beneficiaryUser = User::find($beneficiaryAccount->user_id);
+
+        if ($otpChannel === "sms") {
+
+            // 🔥 SMS Source
+            $smsSource =
+                "WEKA AKIBA\n" .
+                "Transaction ID : {$sourceTransaction->uuid}\n" .
+                "Retrait : {$amount}\n" .
+                "Frais : {$fees}\n" .
+                "Total débité : " . ($amount + $fees) . "\n" .
+                "Solde restant : {$sourceSoldAfter}\n";
+
+            $this->sendSms($sourceUser->user_phone, $smsSource);
+
+            // 🔥 SMS Bénéficiaire
+            $smsBenef =
+                "WEKA AKIBA\n" .
+                "Transaction ID : {$beneficiaryTransaction->uuid}\n" .
+                "Dépôt reçu : {$amount}\n" .
+                "Solde disponible : {$beneficiarySoldAfter}\n";
+
+            $this->sendSms($beneficiaryUser->user_phone, $smsBenef);
+        } else {
+
+            if (!$sourceUser->email || !filter_var($sourceUser->email, FILTER_VALIDATE_EMAIL)) {
+                return;
+            }
+            // 🔥 EMAIL SOURCE
+            $this->sendTransactionEmail(
+                $sourceUser,
+                "Notification de Retrait",
+                "Retrait effectué sur votre compte.",
+                $sourceTransaction,
+                $fees,
+                $sourceTransaction->sold_before,
+                $sourceSoldAfter,
+                $sourceAccountNumber,
+                $beneficiaryAccountNumber
+            );
+
+            if (!$beneficiaryUser->email || !filter_var($beneficiaryUser->email, FILTER_VALIDATE_EMAIL)) {
+                return;
+            }
+            // 🔥 EMAIL BÉNÉFICIAIRE
+            $this->sendTransactionEmail(
+                $beneficiaryUser,
+                "Notification de Dépôt",
+                "Vous avez reçu un dépôt sur votre compte.",
+                $beneficiaryTransaction,
+                0,
+                $beneficiaryTransaction->sold_before,
+                $beneficiarySoldAfter,
+                $sourceAccountNumber,
+                $beneficiaryAccountNumber
+            );
+        }
     }
 
     /**
      * transaction resume before validate
      */
-    public function transactionResumeBeforeValidate(Request $request){
+    public function transactionResumeBeforeValidate(Request $request)
+    {
         try {
             //member_id, member_account_id, amount,withdraw_mode,agent_id,mobile_provider_id
-            if ($request['withdraw_mode']=='agent') {
+            if ($request['withdraw_mode'] == 'agent') {
                 return $this->transactionResumeByAgentMode($request);
             }
 
-            if ($request['withdraw_mode']=='mobile_money') {
+            if ($request['withdraw_mode'] == 'mobile_money') {
                 return $this->transactionResumeByMobileMoneyMode($request);
             }
-            
-            if ($request['withdraw_mode']!=='mobile_money' && $request['withdraw_mode']!=='agent') {
+
+            if ($request['withdraw_mode'] !== 'mobile_money' && $request['withdraw_mode'] !== 'agent') {
                 return $this->errorResponse('withdraw mode not supported');
             }
         } catch (\Exception $th) {
-           return $this->errorResponse($th->getMessage(),500);
+            return $this->errorResponse($th->getMessage(), 500);
         }
     }
 
-    private function transactionResumeByMobileMoneyMode(Request $request){
-          try {
-            $mobilemoneyprovider=MobileMoneyProviders::find($request['mobile_provider_id']);
-                if (!$mobilemoneyprovider) {
-                    return $this->errorResponse('mobile provider not found');
-                }
+    private function transactionResumeByMobileMoneyMode(Request $request)
+    {
+        try {
+            $mobilemoneyprovider = MobileMoneyProviders::find($request['mobile_provider_id']);
+            if (!$mobilemoneyprovider) {
+                return $this->errorResponse('mobile provider not found');
+            }
 
-                if(!$mobilemoneyprovider->status || $mobilemoneyprovider->status!=='enabled'){
-                    return $this->errorResponse('mobile provider not enabled');
-                }
-                $memberaccount=wekamemberaccounts::find($request['member_account_id']);
-                $enterprise=$this->getEse($request['member_id']);
-                if (!$enterprise) {
-                    return $this->errorResponse('enterprise not found');
-                }
+            if (!$mobilemoneyprovider->status || $mobilemoneyprovider->status !== 'enabled') {
+                return $this->errorResponse('mobile provider not enabled');
+            }
+            $memberaccount = wekamemberaccounts::find($request['member_account_id']);
+            $enterprise = $this->getEse($request['member_id']);
+            if (!$enterprise) {
+                return $this->errorResponse('enterprise not found');
+            }
 
-                $member=$this->getinfosuser($request['member_id']);
-                if (!$member) {
+            $member = $this->getinfosuser($request['member_id']);
+            if (!$member) {
                 return $this->errorResponse('member not found');
-                }
+            }
 
-                if ($member['status']!=='enabled') {
-                    return $this->errorResponse('member disabled');
-                }
-                 if (!$member->can_withdraw_on_mobile) {
-                    return $this->errorResponse('the member cannot withdraw via mobile money');
-                }
+            if ($member['status'] !== 'enabled') {
+                return $this->errorResponse('member disabled');
+            }
+            if (!$member->can_withdraw_on_mobile) {
+                return $this->errorResponse('the member cannot withdraw via mobile money');
+            }
 
-                $memberaccount=wekamemberaccounts::find($request['member_account_id']);
-                if (!$memberaccount) {
-                    return $this->errorResponse('member account not found');
-                }  
-                
-                $memberaccountavailable=$memberaccount->isavailable($request['member_account_id']);
-                if (!$memberaccountavailable) {
-                    return $this->errorResponse('account not available for transaction');
-                }
-                //withdrawal fees
-                $fees=0;
-                //withdraw_mode
-                $feesConfigurations=serdipays::where('enterprise_id',$enterprise->id)->first();
-                if (!$feesConfigurations) {
-                    return $this->errorResponse('fees setting not set');
-                }
-                
-                $fees +=$feesConfigurations->b2c_fees+$feesConfigurations->additional_fees;
-            
-                //amount comparison
-                $coast=(($request['amount']*$fees)/100);
-                $amountwithdraw=$request['amount']+$coast;
-                if ($amountwithdraw > $memberaccount->sold) {
-                    return $this->errorResponse('amount exceeds member account sold');
-                }
-                if ($request['test']==='test') {
-                        $providerFields = $mobilemoneyprovider->getSelectedFields(['path']);
-                        $accountFields = $memberaccount->getSelectedFields();
-                        return response()->json([
-                            "status" => 200,
-                            "message" => "success",
-                            "error" => null,
-                            "data" => [
-                                'mobile_provider_name' => $providerFields->get('name'),
-                                'mobile_provider_provider' => $providerFields->get('provider'),
-                                'mobile_provider_logo_path' => $providerFields->get('path'),
+            $memberaccount = wekamemberaccounts::find($request['member_account_id']);
+            if (!$memberaccount) {
+                return $this->errorResponse('member account not found');
+            }
 
-                                'amountwithdraw' => $amountwithdraw,
-                                'coast' => $coast,
-                                'account_sold_after_operation' => $memberaccount->sold - $amountwithdraw,
-                                'fees' => $fees,
+            $memberaccountavailable = $memberaccount->isavailable($request['member_account_id']);
+            if (!$memberaccountavailable) {
+                return $this->errorResponse('account not available for transaction');
+            }
+            //withdrawal fees
+            $fees = 0;
+            //withdraw_mode
+            $feesConfigurations = serdipays::where('enterprise_id', $enterprise->id)->first();
+            if (!$feesConfigurations) {
+                return $this->errorResponse('fees setting not set');
+            }
 
-                                'member_id' => $request->member_id,
-                                'member_account_id' => $request->member_account_id,
-                                'account_description' => $accountFields->get('description'),
-                                'account_number' => $accountFields->get('account_number'),
-                                'account_status' => $accountFields->get('account_status'),
-                                'amount' => $request->amount,
-                                'withdraw_mode' => $request->withdraw_mode,
-                                'mobile_provider_id' => $request->mobile_provider_id,
-                                'test' => $request->test,
+            $fees += $feesConfigurations->b2c_fees + $feesConfigurations->additional_fees;
 
-                                'money' => $memberaccount->money->abreviation ?? null,
-                            ]
-                        ]);
+            //amount comparison
+            $coast = (($request['amount'] * $fees) / 100);
+            $amountwithdraw = $request['amount'] + $coast;
+            if ($amountwithdraw > $memberaccount->sold) {
+                return $this->errorResponse('amount exceeds member account sold');
+            }
+            if ($request['test'] === 'test') {
+                $providerFields = $mobilemoneyprovider->getSelectedFields(['path']);
+                $accountFields = $memberaccount->getSelectedFields();
+                return response()->json([
+                    "status" => 200,
+                    "message" => "success",
+                    "error" => null,
+                    "data" => [
+                        'mobile_provider_name' => $providerFields->get('name'),
+                        'mobile_provider_provider' => $providerFields->get('provider'),
+                        'mobile_provider_logo_path' => $providerFields->get('path'),
 
-                }else if($request['test']==='validation'){
-                  
-                  return  $this->store(new StorewekaAccountsTransactionsRequest([
-                            'amount'=>$amountwithdraw,
-                            'sold_before'=>0,
-                            'sold_after'=>0,
-                            'type'=>'withdraw',
-                            'motif'=>"Retrait via ".$mobilemoneyprovider->name,
-                            'user_id'=>$memberaccount->user_id,
-                            'member_account_id'=>$memberaccount->id,
-                            'member_id'=>$memberaccount->user_id,
-                            'enterprise_id'=>$enterprise->id,
-                            'done_at'=>date('Y-m-d'),
-                            'operation_done_by'=>$member->full_name?$member->full_name:$member->name,
-                            'uuid'=>$this->getUuId('WEKA','OP'),
-                            'fees'=>$coast,
-                            'transaction_status'=>'validated',
-                            'phone'=>$member->user_phone?$member->user_phone:null,
-                            'adresse'=>$member->adress?$member->adress:null
-                    ]));
-                   
-                }else{
-                    return $request->all();
-                }
+                        'amountwithdraw' => $amountwithdraw,
+                        'coast' => $coast,
+                        'account_sold_after_operation' => $memberaccount->sold - $amountwithdraw,
+                        'fees' => $fees,
+
+                        'member_id' => $request->member_id,
+                        'member_account_id' => $request->member_account_id,
+                        'account_description' => $accountFields->get('description'),
+                        'account_number' => $accountFields->get('account_number'),
+                        'account_status' => $accountFields->get('account_status'),
+                        'amount' => $request->amount,
+                        'withdraw_mode' => $request->withdraw_mode,
+                        'mobile_provider_id' => $request->mobile_provider_id,
+                        'test' => $request->test,
+
+                        'money' => $memberaccount->money->abreviation ?? null,
+                    ]
+                ]);
+            } else if ($request['test'] === 'validation') {
+
+                return  $this->store(new StorewekaAccountsTransactionsRequest([
+                    'amount' => $amountwithdraw,
+                    'sold_before' => 0,
+                    'sold_after' => 0,
+                    'type' => 'withdraw',
+                    'motif' => "Retrait via " . $mobilemoneyprovider->name,
+                    'user_id' => $memberaccount->user_id,
+                    'member_account_id' => $memberaccount->id,
+                    'member_id' => $memberaccount->user_id,
+                    'enterprise_id' => $enterprise->id,
+                    'done_at' => date('Y-m-d'),
+                    'operation_done_by' => $member->full_name ? $member->full_name : $member->name,
+                    'uuid' => $this->getUuId('WEKA', 'OP'),
+                    'fees' => $coast,
+                    'transaction_status' => 'validated',
+                    'phone' => $member->user_phone ? $member->user_phone : null,
+                    'adresse' => $member->adress ? $member->adress : null
+                ]));
+            } else {
+                return $request->all();
+            }
         } catch (\Exception $th) {
-           return $this->errorResponse($th->getMessage(),500);
+            return $this->errorResponse($th->getMessage(), 500);
         }
     }
 
-    private function transactionResumeByAgentMode(Request $request){
+    private function transactionResumeByAgentMode(Request $request)
+    {
         try {
             //member_id, member_account_id,amount,withdraw_mode,agent_id
-            if (isset($request['member_id']) && isset($request['agent_id']) && isset($request['member_account_id']) && isset($request['amount']) && isset($request['withdraw_mode'])) { 
-                $sameEnterprise=$this->usersInSameEnterprise($request['member_id'],$request['agent_id']);
+            if (isset($request['member_id']) && isset($request['agent_id']) && isset($request['member_account_id']) && isset($request['amount']) && isset($request['withdraw_mode'])) {
+                $sameEnterprise = $this->usersInSameEnterprise($request['member_id'], $request['agent_id']);
                 if (!$sameEnterprise) {
                     return $this->errorResponse(`member and agent don't have the same enterprise`);
                 }
 
-                $agent=$this->getinfosuser($request['agent_id']);
+                $agent = $this->getinfosuser($request['agent_id']);
                 if (!$agent) {
                     return $this->errorResponse('agent not found');
                 }
 
-                if ($agent['status']!=='enabled') {
+                if ($agent['status'] !== 'enabled') {
                     return $this->errorResponse('agent disabled');
                 }
-                
-                if (!$agent['collector']){
+
+                if (!$agent['collector']) {
                     return $this->errorResponse('agent not a collector');
                 }
 
-                $memberaccount=wekamemberaccounts::find($request['member_account_id']);
+                $memberaccount = wekamemberaccounts::find($request['member_account_id']);
 
-                $agentaccount=wekamemberaccounts::with('money')->where('user_id',$agent->id)
-                ->where('money_id',$memberaccount->money_id)
-                ->first();
+                $agentaccount = wekamemberaccounts::with('money')->where('user_id', $agent->id)
+                    ->where('money_id', $memberaccount->money_id)
+                    ->first();
 
                 if (!$agentaccount) {
                     return $this->errorResponse('agent account not found');
                 }
-                
-                if ($request['withdraw_mode']!=='agent') {
+
+                if ($request['withdraw_mode'] !== 'agent') {
                     return $this->errorResponse('withdraw mode not supported');
                 }
 
-                $enterprise=$this->getEse($request['member_id']);
+                $enterprise = $this->getEse($request['member_id']);
                 if (!$enterprise) {
                     return $this->errorResponse('enterprise not found');
                 }
 
-                $member=$this->getinfosuser($request['member_id']);
+                $member = $this->getinfosuser($request['member_id']);
                 if (!$member) {
                     return $this->errorResponse('member not found');
                 }
 
-                if ($member['status']!=='enabled') {
+                if ($member['status'] !== 'enabled') {
                     return $this->errorResponse('member disabled');
-                } 
-                
+                }
+
                 if (!$member['can_withdraw_by_agent']) {
                     return $this->errorResponse('the member cannot withdraw via agent');
                 }
 
-                $memberaccount=wekamemberaccounts::find($request['member_account_id']);
+                $memberaccount = wekamemberaccounts::find($request['member_account_id']);
                 if (!$memberaccount) {
                     return $this->errorResponse('member account not found');
                 }
 
-                $memberaccountavailable=$memberaccount->isavailable($request['member_account_id']);
+                $memberaccountavailable = $memberaccount->isavailable($request['member_account_id']);
                 if (!$memberaccountavailable) {
                     return $this->errorResponse('account not available for transaction');
                 }
 
                 //withdrawal fees
-                $fees=0;
+                $fees = 0;
                 //withdraw_mode
-                 $feesConfigurations=serdipays::where('enterprise_id',$enterprise->id)->first();
+                $feesConfigurations = serdipays::where('enterprise_id', $enterprise->id)->first();
                 if (!$feesConfigurations) {
                     return $this->errorResponse('mobile provider not set');
                 }
-                
-                $fees +=$feesConfigurations->withdraw_by_agent_fees+$feesConfigurations->additional_fees;
+
+                $fees += $feesConfigurations->withdraw_by_agent_fees + $feesConfigurations->additional_fees;
                 //amount comparison
-                $coast=(($request['amount']*$fees)/100);
-                $amountwithdraw=$request['amount']+$coast;
+                $coast = (($request['amount'] * $fees) / 100);
+                $amountwithdraw = $request['amount'] + $coast;
                 if ($amountwithdraw > $memberaccount->sold) {
                     return $this->errorResponse('amount exceeds member account sold');
                 }
 
-                if ($request['test']==='test') {
-                     return response()->json([
-                        "status"=>200,
-                        "message"=>"success",
-                        "error"=>null,
-                        "data"=>[
-                            'agent'=>$agent?$agent->getSelectedFields([]):null,
-                            'fees'=>$fees,
-                             'account_description' => $memberaccount->getSelectedFields([])->get('description'),
+                if ($request['test'] === 'test') {
+                    return response()->json([
+                        "status" => 200,
+                        "message" => "success",
+                        "error" => null,
+                        "data" => [
+                            'agent' => $agent ? $agent->getSelectedFields([]) : null,
+                            'fees' => $fees,
+                            'account_description' => $memberaccount->getSelectedFields([])->get('description'),
                             'account_number' => $memberaccount->getSelectedFields([])->get('account_number'),
                             'account_status' => $memberaccount->getSelectedFields([])->get('account_status'),
-                            'coast'=>$coast,
-                            'member_id'=>$request->member_id,
-                            'member_account_id'=>$request->member_account_id,
-                            'amount'=>$request->amount,
-                            'withdraw_mode'=>$request->withdraw_mode,
-                            'agent_id'=>$request->agent_id,
-                            'test'=>$request->test,
-                            'amountwithdraw'=>$amountwithdraw,
-                            'account_sold_after_operation'=>$memberaccount->sold-$amountwithdraw,
-                            'money'=>$memberaccount->money->abreviation,
+                            'coast' => $coast,
+                            'member_id' => $request->member_id,
+                            'member_account_id' => $request->member_account_id,
+                            'amount' => $request->amount,
+                            'withdraw_mode' => $request->withdraw_mode,
+                            'agent_id' => $request->agent_id,
+                            'test' => $request->test,
+                            'amountwithdraw' => $amountwithdraw,
+                            'account_sold_after_operation' => $memberaccount->sold - $amountwithdraw,
+                            'money' => $memberaccount->money->abreviation,
                         ]
                     ]);
-                }else if($request['test'==='validation']){
-                     
+                } else if ($request['test' === 'validation']) {
+
                     try {
                         DB::beginTransaction();
 
@@ -2826,7 +3882,7 @@ private function sendFinalNotifications(
                             ]));
 
                             DB::commit();
-                            return $this->successResponse("success",$withdrawmember);
+                            return $this->successResponse("success", $withdrawmember);
                         } else {
                             DB::rollBack();
                             return $this->errorResponse("withdraw fails. transaction cancelled.", 500);
@@ -2835,16 +3891,14 @@ private function sendFinalNotifications(
                         DB::rollBack();
                         return $this->errorResponse($th->getMessage(), 500);
                     }
-
-                }else{
+                } else {
                     return $this->errorResponse('missing required fields');
                 }
-            }else{
+            } else {
                 return $this->errorResponse('missing required fields');
             }
-                
         } catch (\Exception $th) {
-           return $this->errorResponse($th->getMessage(),500);
+            return $this->errorResponse($th->getMessage(), 500);
         }
     }
 
@@ -2856,213 +3910,213 @@ private function sendFinalNotifications(
      */
     public function syncingstore(Request $request)
     {
-        $soldbefore=0;
-        $soldafter=0;
+        $soldbefore = 0;
+        $soldafter = 0;
         // dump($request);
         //if exist the account and not suspended
         if ($request['member_account_id']) {
             //looking for the account
-            $memberaccount=wekamemberaccounts::find($request['member_account_id']);
+            $memberaccount = wekamemberaccounts::find($request['member_account_id']);
             if ($memberaccount) {
                 //if the account is enabled
-                if($memberaccount->account_status=="enabled"){
+                if ($memberaccount->account_status == "enabled") {
                     //if withdraw test the sold before making request
-                    $soldbefore=$memberaccount->sold;
-                    if ($request['type']=='withdraw') {
+                    $soldbefore = $memberaccount->sold;
+                    if ($request['type'] == 'withdraw') {
                         //verify the sold vis the amount sent
-                        if ($memberaccount->sold>=$request['amount']) {
+                        if ($memberaccount->sold >= $request['amount']) {
                             //begin transaction
                             DB::beginTransaction();
                             try {
-                                $memberaccountupdated=$memberaccount;
-                                $memberaccountupdated->sold=$memberaccount->sold-$request['amount'];
-                                if ($request['transaction_status']=='validated') {
+                                $memberaccountupdated = $memberaccount;
+                                $memberaccountupdated->sold = $memberaccount->sold - $request['amount'];
+                                if ($request['transaction_status'] == 'validated') {
                                     $memberaccountupdated->save(); # code...
                                 }
-                                $ifexistsuuid=wekaAccountsTransactions::where('uuid',$request['uuid'])->get();
-                                if (($ifexistsuuid->count())>0) {
-                                    $request['error']="uuid duplicated";
-                                    $request['message']="error";
+                                $ifexistsuuid = wekaAccountsTransactions::where('uuid', $request['uuid'])->get();
+                                if (($ifexistsuuid->count()) > 0) {
+                                    $request['error'] = "uuid duplicated";
+                                    $request['message'] = "error";
                                     // $ifexistsuuid[]
                                     return $request->all();
                                 }
 
-                                $savewithdrawtransaction=wekaAccountsTransactions::create([
-                                    'amount'=>$request['amount'],
-                                    'sold_before'=>$soldbefore,
-                                    'sold_after'=> $memberaccountupdated->sold,
-                                    'type'=>$request['type'],
-                                    'motif'=>$request['motif'],
-                                    'user_id'=>$request['user_id'],
-                                    'member_account_id'=>$memberaccount->id,
-                                    'member_id'=>$memberaccount->user_id,
-                                    'enterprise_id'=>$memberaccount->enterprise_id,
-                                    'done_at'=>$request['done_at']?$request['done_at']:date('Y-m-d'),
-                                    'account_id'=>$request['account_id'],
-                                    'operation_done_by'=>$request['operation_done_by'],
-                                    'uuid'=>$request['uuid']?$request['uuid']:$this->getUuId('WEKA','OP'),
-                                    'fees'=>$request['fees']
+                                $savewithdrawtransaction = wekaAccountsTransactions::create([
+                                    'amount' => $request['amount'],
+                                    'sold_before' => $soldbefore,
+                                    'sold_after' => $memberaccountupdated->sold,
+                                    'type' => $request['type'],
+                                    'motif' => $request['motif'],
+                                    'user_id' => $request['user_id'],
+                                    'member_account_id' => $memberaccount->id,
+                                    'member_id' => $memberaccount->user_id,
+                                    'enterprise_id' => $memberaccount->enterprise_id,
+                                    'done_at' => $request['done_at'] ? $request['done_at'] : date('Y-m-d'),
+                                    'account_id' => $request['account_id'],
+                                    'operation_done_by' => $request['operation_done_by'],
+                                    'uuid' => $request['uuid'] ? $request['uuid'] : $this->getUuId('WEKA', 'OP'),
+                                    'fees' => $request['fees']
                                 ]);
                                 DB::commit();
-                                $original=$this->show($savewithdrawtransaction);
-                                $original['error']=null;
-                                $original['message']="success";
+                                $original = $this->show($savewithdrawtransaction);
+                                $original['error'] = null;
+                                $original['message'] = "success";
                                 return $original;
                             } catch (Exception $th) {
                                 DB::rollBack();
                                 //throw $th;
-                                $request['error']=$th->getMessage();
-                                $request['message']="error";
+                                $request['error'] = $th->getMessage();
+                                $request['message'] = "error";
                                 return $request->all();
                             }
-                        }else {
-                            $request['error']="sold not enough";
-                            $request['message']="error";
+                        } else {
+                            $request['error'] = "sold not enough";
+                            $request['message'] = "error";
                             return $request->all();
                         }
                     }
 
                     //if is entry
-                    if ($request['type']=='deposit') {
-                            //begin transaction
-                            DB::beginTransaction();
-                            try {
-                                $memberaccountupdated=$memberaccount;
-                                $memberaccountupdated->sold=$memberaccount->sold+$request['amount'];
+                    if ($request['type'] == 'deposit') {
+                        //begin transaction
+                        DB::beginTransaction();
+                        try {
+                            $memberaccountupdated = $memberaccount;
+                            $memberaccountupdated->sold = $memberaccount->sold + $request['amount'];
 
-                                if ($request['transaction_status']=='validated') {
-                                    $memberaccountupdated->save(); 
-                                }
-
-                                $ifexistsuuid=wekaAccountsTransactions::where('uuid',$request['uuid'])->get();
-                                if (($ifexistsuuid->count())>0) {
-                                    $request['error']="uuid duplicated";
-                                    $request['message']="error";
-                                    return $request->all();
-                                }
-                               
-                                $savewithdrawtransaction=wekaAccountsTransactions::create([
-                                    'amount'=>$request['amount'],
-                                    'sold_before'=>$soldbefore,
-                                    'sold_after'=> $memberaccountupdated->sold,
-                                    'type'=>$request['type'],
-                                    'motif'=>$request['motif'],
-                                    'user_id'=>$request['user_id'],
-                                    'member_account_id'=>$memberaccount->id,
-                                    'member_id'=>$memberaccount->user_id,
-                                    'enterprise_id'=>$memberaccount->enterprise_id,
-                                    'done_at'=>$request['done_at']?$request['done_at']:date('Y-m-d'),
-                                    'account_id'=>$request['account_id'],
-                                    'operation_done_by'=>$request['operation_done_by'],
-                                    'uuid'=>$request['uuid']?$request['uuid']:$this->getUuId('WEKA','OP'),
-                                    'fees'=>$request['fees'],
-                                ]);
-                                DB::commit();
-                                $original=$this->show($savewithdrawtransaction);
-                                $original['error']=null;
-                                $original['message']="success";
-                                return $original;
-                            } catch (Exception $th) {
-                                DB::rollBack();
-                                $request['error']=$th->getMessage();
-                                $request['message']="error";
-                                return $request->all(); 
+                            if ($request['transaction_status'] == 'validated') {
+                                $memberaccountupdated->save();
                             }
+
+                            $ifexistsuuid = wekaAccountsTransactions::where('uuid', $request['uuid'])->get();
+                            if (($ifexistsuuid->count()) > 0) {
+                                $request['error'] = "uuid duplicated";
+                                $request['message'] = "error";
+                                return $request->all();
+                            }
+
+                            $savewithdrawtransaction = wekaAccountsTransactions::create([
+                                'amount' => $request['amount'],
+                                'sold_before' => $soldbefore,
+                                'sold_after' => $memberaccountupdated->sold,
+                                'type' => $request['type'],
+                                'motif' => $request['motif'],
+                                'user_id' => $request['user_id'],
+                                'member_account_id' => $memberaccount->id,
+                                'member_id' => $memberaccount->user_id,
+                                'enterprise_id' => $memberaccount->enterprise_id,
+                                'done_at' => $request['done_at'] ? $request['done_at'] : date('Y-m-d'),
+                                'account_id' => $request['account_id'],
+                                'operation_done_by' => $request['operation_done_by'],
+                                'uuid' => $request['uuid'] ? $request['uuid'] : $this->getUuId('WEKA', 'OP'),
+                                'fees' => $request['fees'],
+                            ]);
+                            DB::commit();
+                            $original = $this->show($savewithdrawtransaction);
+                            $original['error'] = null;
+                            $original['message'] = "success";
+                            return $original;
+                        } catch (Exception $th) {
+                            DB::rollBack();
+                            $request['error'] = $th->getMessage();
+                            $request['message'] = "error";
+                            return $request->all();
+                        }
                     }
-                }else{
-                    $request['error']="account disabled";
-                    $request['message']="error";
-                    return $request->all(); 
+                } else {
+                    $request['error'] = "account disabled";
+                    $request['message'] = "error";
+                    return $request->all();
                 }
-            }else{
-                $request['error']="no account sent";
-                $request['message']="error";
-                return $request->all(); 
+            } else {
+                $request['error'] = "no account sent";
+                $request['message'] = "error";
+                return $request->all();
             }
-        }else{
-            $request['error']="no account find";
-            $request['message']="error";
-            return $request->all();  
+        } else {
+            $request['error'] = "no account find";
+            $request['message'] = "error";
+            return $request->all();
         }
     }
 
     /**
      * saving withdraw on mobile device pending 
      */
-    public function pendingWithdrawalAccountTransaction(Request $request){
+    public function pendingWithdrawalAccountTransaction(Request $request)
+    {
         if (isset($request['user_id']) && !is_null($request['user_id']) && filter_var($request['user_id'], FILTER_VALIDATE_INT) && (int)$request['user_id'] > 0) {
-                $soldbefore=0;
-                $soldafter=0;
+            $soldbefore = 0;
+            $soldafter = 0;
             //if exist the account and not suspended
             if ($request['member_account_id']) {
                 //looking for the account
-                $memberaccount=wekamemberaccounts::find($request['member_account_id']);
+                $memberaccount = wekamemberaccounts::find($request['member_account_id']);
                 if ($memberaccount) {
                     //if the account is enabled
-                    if($memberaccount->account_status=="enabled"){
+                    if ($memberaccount->account_status == "enabled") {
                         //if withdraw test the sold before making request
-                        $soldbefore=$memberaccount->sold;
-                        if ($request['type']=='withdraw') {
+                        $soldbefore = $memberaccount->sold;
+                        if ($request['type'] == 'withdraw') {
                             //verify the sold vis the amount sent
-                            if ($memberaccount->sold>=$request['amount']) {
+                            if ($memberaccount->sold >= $request['amount']) {
                                 //begin transaction
                                 DB::beginTransaction();
                                 try {
-                                    $memberaccountupdated=$memberaccount;
-                                    $memberaccountupdated->sold=$memberaccount->sold-$request['amount'];
-                                    $request['transaction_status']=='pending';
+                                    $memberaccountupdated = $memberaccount;
+                                    $memberaccountupdated->sold = $memberaccount->sold - $request['amount'];
+                                    $request['transaction_status'] == 'pending';
 
-                                    $ifexistsuuid=wekaAccountsTransactions::where('uuid',$request['uuid'])->get()->first();
+                                    $ifexistsuuid = wekaAccountsTransactions::where('uuid', $request['uuid'])->get()->first();
 
                                     if ($ifexistsuuid) {
                                         return $this->errorResponse('uuid operation duplicated');
                                     }
 
-                                    $savewithdrawtransaction=wekaAccountsTransactions::create([
-                                        'amount'=>$request['amount'],
-                                        'sold_before'=>$soldbefore,
-                                        'sold_after'=> $memberaccountupdated->sold,
-                                        'type'=>$request['type'],
-                                        'motif'=>$request['motif'],
-                                        'user_id'=>$request['user_id'],
-                                        'member_account_id'=>$memberaccount->id,
-                                        'member_id'=>$memberaccount->user_id,
-                                        'enterprise_id'=>$memberaccount->enterprise_id,
-                                        'done_at'=>$request['done_at']?$request['done_at']:date('Y-m-d'),
-                                        'account_id'=>$request['account_id'],
-                                        'operation_done_by'=>$request['operation_done_by'],
-                                        'uuid'=>$request['uuid']?$request['uuid']:$this->getUuId('WEKA','OP'),
-                                        'fees'=>$request['fees']
+                                    $savewithdrawtransaction = wekaAccountsTransactions::create([
+                                        'amount' => $request['amount'],
+                                        'sold_before' => $soldbefore,
+                                        'sold_after' => $memberaccountupdated->sold,
+                                        'type' => $request['type'],
+                                        'motif' => $request['motif'],
+                                        'user_id' => $request['user_id'],
+                                        'member_account_id' => $memberaccount->id,
+                                        'member_id' => $memberaccount->user_id,
+                                        'enterprise_id' => $memberaccount->enterprise_id,
+                                        'done_at' => $request['done_at'] ? $request['done_at'] : date('Y-m-d'),
+                                        'account_id' => $request['account_id'],
+                                        'operation_done_by' => $request['operation_done_by'],
+                                        'uuid' => $request['uuid'] ? $request['uuid'] : $this->getUuId('WEKA', 'OP'),
+                                        'fees' => $request['fees']
                                     ]);
                                     DB::commit();
-                                    $original=$this->show($savewithdrawtransaction);
+                                    $original = $this->show($savewithdrawtransaction);
                                     return response()->json([
                                         'error' => null,
                                         'status' => 200,
-                                        'message' =>'success',
-                                        'data' =>$original 
+                                        'message' => 'success',
+                                        'data' => $original
                                     ]);
                                 } catch (Exception $th) {
                                     DB::rollBack();
-                                    return $this->errorResponse($th->getMessage(),500);
+                                    return $this->errorResponse($th->getMessage(), 500);
                                 }
-                            }else {
-                            return $this->errorResponse('sold not enough',200);
+                            } else {
+                                return $this->errorResponse('sold not enough', 200);
                             }
                         }
-                    }else{
-                        return $this->errorResponse('account disabled',400);   
+                    } else {
+                        return $this->errorResponse('account disabled', 400);
                     }
-                }else{
-                    return $this->errorResponse('no account sent',400);  ; 
+                } else {
+                    return $this->errorResponse('no account sent', 400);;
                 }
-            }else{
-                return $this->errorResponse('no account sent',400);  
-            } 
-        }else{
+            } else {
+                return $this->errorResponse('no account sent', 400);
+            }
+        } else {
             return $this->errorResponse('no member sent');
         }
-       
     }
 
     /**
@@ -3073,13 +4127,80 @@ private function sendFinalNotifications(
      */
     public function show(wekaAccountsTransactions $wekaAccountsTransactions)
     {
-        return wekaAccountsTransactions::join('users','weka_accounts_transactions.user_id','=','users.id')
-        ->join('wekamemberaccounts as WA','weka_accounts_transactions.member_account_id','WA.id')
-        ->join('moneys as M','WA.money_id','M.id')
-        ->join('users as AU','WA.user_id','AU.id')
-        ->leftjoin('accounts as A','weka_accounts_transactions.account_id','A.id')
-        ->where('weka_accounts_transactions.id','=',$wekaAccountsTransactions->id)
-        ->get(['AU.name as member_name','AU.user_name as member_user_name','AU.full_name as member_fullname','AU.uuid as member_uuid','weka_accounts_transactions.*','A.name as account_name','WA.account_number','WA.description as memberaccount_name','M.abreviation','M.id as money_id','users.user_name as done_by_name','users.full_name as done_by_fullname','users.uuid as done_by_uuid'])->first();
+        return wekaAccountsTransactions::join(
+            'users',
+            'weka_accounts_transactions.user_id',
+            '=',
+            'users.id'
+        )
+            ->join(
+                'wekamemberaccounts as WA',
+                'weka_accounts_transactions.member_account_id',
+                '=',
+                'WA.id'
+            )
+            ->join(
+                'moneys as M',
+                'WA.money_id',
+                '=',
+                'M.id'
+            )
+            ->join(
+                'users as AU',
+                'WA.user_id',
+                '=',
+                'AU.id'
+            )
+            ->leftJoin(
+                'accounts as A',
+                'weka_accounts_transactions.account_id',
+                '=',
+                'A.id'
+            )
+
+            // 🔥 NOUVELLES JOINTURES (from_to / sent_to)
+            ->leftJoin(
+                'users as FTU',
+                'weka_accounts_transactions.from_to_id',
+                '=',
+                'FTU.id'
+            )
+            ->leftJoin(
+                'users as STU',
+                'weka_accounts_transactions.sent_to_id',
+                '=',
+                'STU.id'
+            )
+
+            ->where('weka_accounts_transactions.id', $wekaAccountsTransactions->id)
+            ->first([
+                // 👤 Membre
+                'AU.name as member_name',
+                'AU.user_name as member_user_name',
+                'AU.full_name as member_fullname',
+                'AU.uuid as member_uuid',
+
+                // 📦 Transaction
+                'weka_accounts_transactions.*',
+
+                // 🏦 Compte
+                'A.name as account_name',
+                'WA.account_number',
+                'WA.description as memberaccount_name',
+
+                // 💰 Monnaie
+                'M.abreviation',
+                'M.id as money_id',
+
+                // 👤 Action faite par
+                'users.user_name as done_by_name',
+                'users.full_name as done_by_fullname',
+                'users.uuid as done_by_uuid',
+
+                // 🆕 UNIQUEMENT name depuis users
+                'FTU.name as from_to_name',
+                'STU.name as sent_to_name',
+            ]);
     }
 
     /**
@@ -3113,7 +4234,7 @@ private function sendFinalNotifications(
                     'data'    => null
                 ]);
             }
-             DB::beginTransaction();
+            DB::beginTransaction();
             try {
                 $fieldsToUpdate = $request->only([
                     'amount',
@@ -3126,7 +4247,7 @@ private function sendFinalNotifications(
                 ]);
 
                 $find->update($fieldsToUpdate);
-                 DB::commit();
+                DB::commit();
                 return response()->json([
                     'status'  => 200,
                     'message' => 'success',
@@ -3134,7 +4255,7 @@ private function sendFinalNotifications(
                     'data'    => $this->show($find)
                 ]);
             } catch (\Exception $e) {
-                 DB::rollBack();
+                DB::rollBack();
 
                 return response()->json([
                     'status'  => 500,
@@ -3164,7 +4285,7 @@ private function sendFinalNotifications(
         //
     }
 
-   public function exportTransactionsExcel(Request $request)
+    public function exportTransactionsExcel(Request $request)
     {
         if (!isset($request->user_id)) {
             return $this->errorResponse('user not sent');
@@ -3195,13 +4316,12 @@ private function sendFinalNotifications(
             $filename = 'transactions_' . now()->format('Ymd_His') . '.' . $format;
 
             return Excel::download($export, $filename, $type);
-
         } catch (\Exception $ex) {
             return $this->errorResponse($ex->getMessage(), 500);
         }
     }
 
-   
+
     public function exportTransactionsPdf(Request $request)
     {
         if (!isset($request->user_id)) {
@@ -3247,18 +4367,17 @@ private function sendFinalNotifications(
 
             $canvas->page_script(function ($pageNumber, $pageCount) use ($canvas, $font) {
                 $text = "Page $pageNumber / $pageCount";
-                $canvas->text(770, 570, $text, $font, 10); 
+                $canvas->text(770, 570, $text, $font, 10);
             });
 
             return $pdf->stream('transactions.pdf');
-
         } catch (\Exception $ex) {
             return $this->errorResponse($ex->getMessage(), 500);
         }
     }
 
 
-   public function validateimputation(Request $request)
+    public function validateimputation(Request $request)
     {
         $request->validate([
             'data' => 'required|array|min:1',
@@ -3337,7 +4456,6 @@ private function sendFinalNotifications(
                 'message' => 'Toutes les transactions ont été imputées avec succès.',
                 'updated' => $updated,
             ]);
-
         } catch (\Exception $e) {
             DB::rollBack();
 
