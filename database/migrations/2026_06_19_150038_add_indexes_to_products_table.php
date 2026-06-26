@@ -34,7 +34,7 @@ return new class extends Migration
         $this->addIndexIfMissing(
             'products',
             'idx_products_added_by',
-            'ALTER TABLE products ADD INDEX idx_products_added_by (added_by)'
+            'ALTER TABLE products ADD INDEX idx_products_added_by (added_by(64))'
         );
 
       $this->addIndexIfMissing(

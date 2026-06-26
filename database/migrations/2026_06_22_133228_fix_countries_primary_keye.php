@@ -17,6 +17,9 @@ return new class extends Migration
         ");
 
         if (($primaryKey[0]->total ?? 0) == 0) {
+            // ÉTAPE DE SÉCURITÉ : Nettoyer les IDs en doublon (ex: l'ID 168) avant de poser la clé primaire
+            $this->repairCountryDuplicateIds();
+
             DB::statement("
                 ALTER TABLE countries
                 ADD PRIMARY KEY (id)
@@ -44,5 +47,15 @@ return new class extends Migration
             ");
         } catch (\Throwable $e) {
         }
+    }
+
+    /**
+     * Assigne un identifiant incrémental unique à chaque pays existant
+     * pour éliminer les conflits de doublons d'id (comme le 168) avant la clé primaire.
+     */
+    private function repairCountryDuplicateIds(): void
+    {
+        DB::statement("SET @count = 0;");
+        DB::statement("UPDATE `countries` SET `id` = (@count:=@count+1);");
     }
 };
