@@ -14,12 +14,8 @@ class Notification extends Model
 
     protected $guarded = [];
 
-    protected function casts(): array
-    {
-        return [
-            'id_notification' => 'integer',
-            'date_notification' => 'datetime',
-        ];
-    }
+    protected $casts = [
+        'id_notification' => 'integer',
+        'date_notification' => 'datetime',
+    ];
 }
-

@@ -2,8 +2,12 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Mail\ContactUsMail;
+use App\Models\ContactUs;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Schema;
 
 class SettingsController extends ApiController
@@ -180,8 +184,73 @@ class SettingsController extends ApiController
         );
     }
 
-    public function observations()
+    public function storeObservation(Request $request)
     {
+        $data = $request->validate([
+            'contact_names'   => ['required', 'string', 'max:255'],
+            'contact_email'   => ['nullable', 'email', 'max:255'],
+            'contact_phone'   => ['nullable', 'string', 'max:50'],
+            'business_type'   => ['nullable', 'string', 'max:100'],
+            'contact_message' => ['required', 'string', 'max:5000'],
+        ]);
+
+        // Log::info('Configuration mail utilisée.', [
+        //     'mailer'     => config('mail.default'),
+        //     'host'       => config('mail.mailers.smtp.host'),
+        //     'port'       => config('mail.mailers.smtp.port'),
+        //     'username'   => config('mail.mailers.smtp.username'),
+        //     'from'       => config('mail.from.address'),
+        //     'receiver'   => config('mail.contact_receiver'),
+        // ]);
+        ContactUs::create([
+            'contact_names'   => $data['contact_names'],
+            'contact_email'   => $data['contact_email'] ?? null,
+            'contact_phone'   => $data['contact_phone'] ?? null,
+            'business_type'   => $data['business_type'] ?? null,
+            'contact_message' => $data['contact_message'],
+            'contact_date'    => now(),
+        ]);
+
+        // Log::info('Nouveau message de contact enregistré.', [
+        //     'name'  => $data['contact_names'],
+        //     'email' => $data['contact_email'] ?? null,
+        //     'phone' => $data['contact_phone'] ?? null,
+        // ]);
+
+        // try {
+
+        //     $receiver = config('mail.contact_receiver');
+
+        //     Log::info('Tentative d\'envoi du mail.', [
+        //         'to' => $receiver,
+        //     ]);
+
+        //     Mail::to($receiver)->send(new ContactUsMail($data));
+
+        //     Log::info('Mail envoyé avec succès.', [
+        //         'to' => $receiver,
+        //     ]);
+        // } catch (\Throwable $e) {
+
+        //     Log::error('Erreur lors de l\'envoi du mail.', [
+        //         'to'        => config('mail.contact_receiver'),
+        //         'message'   => $e->getMessage(),
+        //         'file'      => $e->getFile(),
+        //         'line'      => $e->getLine(),
+        //         'trace'     => $e->getTraceAsString(),
+        //     ]);
+        // }
+
+        return $this->ok(
+            null,
+            'Merci pour votre message. Nous vous répondrons dans les plus brefs délais.'
+        );
+    }
+
+    public function observations(Request $request)
+    {
+        $perPage = min((int) $request->query('per_page', 15), 100);
+
         return $this->ok(
             DB::table('contact_us')
                 ->select(
@@ -189,11 +258,12 @@ class SettingsController extends ApiController
                     'contact_names',
                     'contact_email',
                     'contact_phone',
+                    'business_type',
                     'contact_message',
                     'contact_date'
                 )
                 ->orderByDesc('id')
-                ->get()
+                ->paginate($perPage)
         );
     }
 
@@ -217,4 +287,3 @@ class SettingsController extends ApiController
         DB::table($table)->insert(array_merge($insertDefaults, $payload));
     }
 }
-

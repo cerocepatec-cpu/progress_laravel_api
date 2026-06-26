@@ -15,6 +15,7 @@ $registerPublicAuthRoutes = function (): void {
     Route::post('members', [MemberController::class, 'store']);
     Route::post('auth/login', [AuthController::class, 'login']);
     Route::post('auth/sign-in', [AuthController::class, 'login']);
+    Route::post('/contact-us', [SettingsController::class, 'storeObservation']);
 };
 
 $registerSharedAuthenticatedRoutes = function (): void {
@@ -25,6 +26,7 @@ $registerSharedAuthenticatedRoutes = function (): void {
 
     Route::get('notifications', [NotificationController::class, 'index']);
     Route::post('notifications/{notification}/read', [NotificationController::class, 'markAsRead']);
+    Route::post('notifications/read-all', [NotificationController::class, 'markAllAsRead']);
 };
 
 $registerMemberApplicationRoutes = function (): void {
